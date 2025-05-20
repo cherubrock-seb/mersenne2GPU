@@ -1,5 +1,5 @@
 /*
- * Copyright 2025, Cherub Rock
+ * Copyright 2025, cherubrock
  *
  * This program is an OpenCL implementation inspired by "mersenne2.cpp" 
  * originally written by Yves Gallot (Copyright 2025).
