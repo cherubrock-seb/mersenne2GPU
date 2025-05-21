@@ -11,7 +11,11 @@
  * This code is provided in the hope that it will be useful.
  */
 
-#include <CL/cl.h>
+#ifdef __APPLE__
+# include <OpenCL/opencl.h>
+#else
+# include <CL/cl.h>
+#endif
 #include <iostream>
 #include <vector>
 #include <cstdint>
@@ -43,15 +47,15 @@ public:
     Z61 operator-(const Z61& o) const { return Z61(sub(_n, o._n)); }
     Z61 operator*(const Z61& o) const { return Z61(mul(_n, o._n)); }
     Z61 sqr() const { return Z61(mul(_n, _n)); }
-    Z61 lshift(uint8_t s) const {
-        uint8_t ss = s % 61;
+    Z61 lshift(int s) const {
+        int ss = s % 61;
         if (!ss) return *this;
         __uint128_t t = __uint128_t(_n) << ss;
         uint64_t lo = uint64_t(t) & Z61_p;
         uint64_t hi = uint64_t(t >> 61);
         return Z61(add(lo, hi));
     }
-    Z61 rshift(uint8_t s) const { return lshift(61 - (s % 61)); }
+    Z61 rshift(int s) const { return lshift(61 - (s % 61)); }
 };
 
 class Z31 {
@@ -78,15 +82,15 @@ public:
     Z31 operator-(const Z31& o) const { return Z31(sub(_n, o._n)); }
     Z31 operator*(const Z31& o) const { return Z31(mul(_n, o._n)); }
     Z31 sqr() const { return Z31(mul(_n, _n)); }
-    Z31 lshift(uint8_t s) const {
-        uint8_t ss = s % 31;
+    Z31 lshift(int s) const {
+        int ss = s % 31;
         if (!ss) return *this;
         uint64_t t = uint64_t(_n) << ss;
         uint32_t lo = uint32_t(t & Z31_p);
         uint32_t hi = uint32_t(t >> 31);
         return Z31(add(lo, hi));
     }
-    Z31 rshift(uint8_t s) const { return lshift(31 - (s % 31)); }
+    Z31 rshift(int s) const { return lshift(31 - (s % 31)); }
 };
 
 class GF61 {
@@ -179,7 +183,7 @@ public:
     }
 };
 
-struct IBWeight { uint8_t w61, w31; };
+struct IBWeight { int w61, w31; };
 
 static size_t bitrev(size_t i, size_t n) {
     size_t r = 0;
@@ -189,11 +193,14 @@ static size_t bitrev(size_t i, size_t n) {
 }
 
 const char* KC = R"CLC(
+typedef struct {
+    ulong hi, lo;
+} u128_fake;
 #pragma pack(push,1)
 typedef ulong  u64;
 typedef uint   u32;
-typedef uchar  u8;
-typedef unsigned __int128 u128;
+//typedef unsigned __int128 u128;
+typedef u128_fake u128;
 
 typedef struct {
     u64 s0, s1;
@@ -201,19 +208,51 @@ typedef struct {
 } GF;
 #pragma pack(pop)
 
-typedef struct { u8 w61, w31; } IW;
+typedef struct { uint w61, w31; } IW;
 
 #define P61 (((u64)1<<61)-1)
 #define P31 (((u32)1<<31)-1)
+inline u128 mul_64x64_128(ulong a, ulong b) {
+    ulong a_lo = (uint)a;
+    ulong a_hi = a >> 32;
+    ulong b_lo = (uint)b;
+    ulong b_hi = b >> 32;
+
+    ulong lo_lo = a_lo * b_lo;
+    ulong lo_hi = a_lo * b_hi;
+    ulong hi_lo = a_hi * b_lo;
+    ulong hi_hi = a_hi * b_hi;
+
+    ulong cross = lo_hi + hi_lo;
+    ulong cross_lo = cross << 32;
+    ulong cross_hi = cross >> 32;
+
+    ulong lo = lo_lo + cross_lo;
+    ulong carry = (lo < lo_lo) ? 1 : 0;
+    ulong hi = hi_hi + cross_hi + carry;
+
+    return (u128){ .hi = hi, .lo = lo };
+}
 
 u64 add61(u64 a,u64 b){u64 t=a+b;return t-(t>=P61?P61:0);} 
 u64 sub61(u64 a,u64 b){u64 t=a-b;return t+(a<b?P61:0);} 
-u64 mul61(u64 a,u64 b){u128 t=(u128)a*b;u64 lo=(u64)t&P61;u64 hi=(u64)(t>>61);return add61(lo,hi);} 
+inline u64 mul61(u64 a, u64 b) {
+    u128 t = mul_64x64_128(a, b);
+    u64 lo = t.lo & P61;
+    u64 hi = (t.lo >> 61) | (t.hi << 3); // (64 - 61 = 3)
+    return add61(lo, hi);
+}
+
+
 
 u32 add31(u32 a,u32 b){u32 t=a+b;return t-(t>=P31?P31:0);} 
 u32 sub31(u32 a,u32 b){u32 t=a-b;return t+(a<b?P31:0);} 
-u32 mul31(u32 a,u32 b){u128 t=(u128)a*b;u32 lo=(u32)t&P31;u32 hi=(u32)(t>>31);return add31(lo,hi);} 
-
+inline u32 mul31(u32 a, u32 b) {
+    u64 t = (u64)a * b;
+    u32 lo = (u32)(t & P31);
+    u32 hi = (u32)(t >> 31);
+    return add31(lo, hi);
+}
 GF gf_add(GF a,GF b){return (GF){
     add61(a.s0,b.s0),add61(a.s1,b.s1),
     add31(a.t0,b.t0),add31(a.t1,b.t1)};
@@ -229,32 +268,39 @@ GF gf_mul(GF a,GF b){
     return (GF){sub61(x0,x1),add61(y0,y1),sub31(X0,X1),add31(Y0,Y1)};
 }
 
+inline ulong lshift_mod61(ulong x, uint s) {
+    s %= 61;
+    if (s == 0) return x;
+    ulong lo = (x << s) & P61;
+    ulong hi = (x >> (61 - s));
+    return add61(lo, hi);
+}
 
-inline ulong rshift_mod61(ulong x, uint s)
-{
-    uint s61 = s % 61;
-    if (s61 == 0) return x;
-    uint sh = 61 - s61;
+inline ulong rshift_mod61(ulong x, uint s) {
+    s %= 61;
+    if (s == 0) return x;
+    return lshift_mod61(x, 61 - s);
+}
 
-    ulong lo = (x << sh) & P61;
-    ulong hi = (sh == 0) ? 0 : (x >> (64 - sh));
+inline u32 lshift_mod31(u32 x, uint s) {
+    s %= 31;
+    if (s == 0) return x;
+    u32 lo = (x << s) & P31;
+    u32 hi = (x >> (31 - s));
+    return add31(lo, hi);
+}
 
-    ulong r = lo + hi;
-    return (r >= P61) ? r - P61 : r;
+inline u32 rshift_mod31(u32 x, uint s) {
+    s %= 31;
+    if (s == 0) return x;
+    return lshift_mod31(x, 31 - s);
 }
 
 
-inline u32 rshift_mod31(u32 x, u8 s)
+
+inline GF rshift_GF(GF z, uint rs0, uint rs1, uint rt0, uint rt1)
 {
-    u8 r = 31 - (s % 31);
-    u64 t = (u64)x << r;
-    u32 lo = (u32)t & P31;
-    u32 hi = (u32)(t >> 31);
-    u32 res = lo + hi;
-    return (res >= P31) ? res - P31 : res;
-}
-inline GF rshift_GF(GF z, u8 rs0, u8 rs1, u8 rt0, u8 rt1)
-{
+
     return (GF){
         rshift_mod61(z.s0, rs0),
         rshift_mod61(z.s1, rs1),
@@ -283,7 +329,7 @@ GF gf_subi(GF a, GF b){
 }
 __kernel void weight(__global GF* z,__global const IW* w){
     int i=get_global_id(0);
-    u8 r61=w[i].w61, r31=w[i].w31;
+    uint r61=w[i].w61, r31=w[i].w31;
     u64 v0=z[i].s0, v1=z[i].s1;
     u32 t0=z[i].t0, t1=z[i].t1;
     u64 lo0=(v0<<r61)&P61, hi0=v0>>(61-r61);
@@ -576,24 +622,33 @@ __kernel void backward4(__global GF* z,
                          );
     }
 }
-
-
 __kernel void unweight_norm(__global GF* z, __global const IW* w, int ln)
 {
     int i = get_global_id(0);
-
-    u8 rs0 = w[2*i + 0].w61 + ln + 2;
-    u8 rs1 = w[2*i + 1].w61 + ln + 2;
-    u8 rt0 = w[2*i + 0].w31 + ln + 2;
-    u8 rt1 = w[2*i + 1].w31 + ln + 2;
-
-    z[i] = rshift_GF(z[i], rs0, rs1, rt0, rt1);
+    uint ln2 = ln + 2;
+    uint rs0 = w[2*i + 0].w61 + ln2;
+    uint rs1 = w[2*i + 1].w61 + ln2;
+    uint rt0 = w[2*i + 0].w31 + ln2;
+    uint rt1 = w[2*i + 1].w31 + ln2;
+    printf("i=%d | ln=%d | w61=%u %u | w31=%u %u | rs0=%u rs1=%u rt0=%u rt1=%u\n",
+    i, ln,
+    w[2*i + 0].w61, w[2*i + 1].w61,
+    w[2*i + 0].w31, w[2*i + 1].w31,
+    rs0, rs1, rt0, rt1);
+    GF zi = z[i];
+    printf(" Before: s0=%llu s1=%llu | t0=%u t1=%u\n",
+    zi.s0, zi.s1, zi.t0, zi.t1);
+    z[i] = rshift_GF(zi, rs0, rs1, rt0, rt1);
+    zi = z[i];
+    printf(" After : s0=%llu s1=%llu | t0=%u t1=%u\n",
+    zi.s0, zi.s1, zi.t0, zi.t1);
 }
 
-__kernel void carry(__global GF* z,__global const u8* d,__global int* f){
+
+__kernel void carry(__global GF* z,__global const uint* d,__global int* f){
     int i=get_global_id(0);
     u64 v0=z[i].s0, v1=z[i].s1;
-    u8 w=d[i];
+    uint w=d[i];
     u64 mask=((u64)1<<w)-1;
     if(!((v0==0&&v1==0)||(v0==mask&&v1==mask)))
         atomic_and(f,0);
@@ -617,7 +672,9 @@ int main(){
     cl_device_id D; cl_uint dn;
     clGetDeviceIDs(P,CL_DEVICE_TYPE_GPU,1,&D,&dn);
     cl_context C=clCreateContext(nullptr,1,&D,nullptr,nullptr,nullptr);
-    cl_command_queue Q=clCreateCommandQueueWithProperties(C,D,nullptr,nullptr);
+    //cl_command_queue Q=clCreateCommandQueueWithProperties(C,D,nullptr,nullptr);
+    cl_int err2 = CL_SUCCESS;
+    cl_command_queue Q = clCreateCommandQueue(C, D, CL_QUEUE_PROFILING_ENABLE, &err2);
 
     cl_program PR=clCreateProgramWithSource(C,1,&KC,nullptr,nullptr);
     cl_int err = clBuildProgram(PR,1,&D,nullptr,nullptr,nullptr);
@@ -646,13 +703,13 @@ int main(){
         for(uint32_t d=3;d*d<=p;d+=2) if(p%d==0){isp=false;break;}
         if(!isp) continue;
 
-        uint8_t ln=2, w;
-        do{++ln; w=uint8_t(p>>ln);}while(ln+2*(w+1)>=92);
+        int ln=2, w;
+        do{++ln; w=int(p>>ln);}while(ln+2*(w+1)>=92);
         size_t n=1u<<ln, h=n>>1;
 
         std::vector<GF61_31> z(h), wv(5*h/2);
         std::vector<IBWeight> iw_fwd(n), iw_inv(n);
-        std::vector<uint8_t> dw(n);
+        std::vector<int> dw(n);
 
         z[0]=GF61_31(4,0);
         for(size_t i=1;i<h;++i) z[i]=GF61_31(0,0);
@@ -670,22 +727,24 @@ int main(){
 
         for(size_t i=0;i<n;++i){
             uint64_t qj=uint64_t(p)*i;
-            dw[i]=uint8_t((qj+n-1)/n);
+            dw[i]=int((qj+n-1)/n);
         }
         iw_fwd[0]={0,0};
         for(size_t i=1;i<n;++i){
             uint64_t qj=uint64_t(p)*i;
-            uint8_t c=uint8_t(((qj-1)/n+1)-((qj-1)/n));
+            int c=int(((qj-1)/n+1)-((qj-1)/n));
             iw_fwd[i]={c,c};
         }
-        uint8_t lr2_61=uint8_t(((uint64_t)1<<60)/n%61);
-        uint8_t lr2_31=uint8_t(((uint64_t)1<<30)/n%31);
-        for(size_t i=0;i<n;++i){
-            uint64_t qj=uint64_t(p)*i;
-            uint32_t r=uint32_t(qj%n);
-            iw_inv[i].w61=uint8_t((lr2_61*(n-r))%61);
-            iw_inv[i].w31=uint8_t((lr2_31*(n-r))%31);
+        int lr2_61 = int(((uint64_t)1 << 60) / n % 61);
+        int lr2_31 = int(((uint64_t)1 << 30) / n % 31);
+        for (size_t i = 0; i < n; ++i) {
+            uint64_t qj = uint64_t(p) * i;
+            uint32_t r = uint32_t(qj % n);
+            iw_inv[i].w61 = int((lr2_61 * (n - r)) % 61);
+            iw_inv[i].w31 = int((lr2_31 * (n - r)) % 31);
         }
+        iw_inv[0].w61 = 0;
+        iw_inv[0].w31 = 0;
 
         int flag=1;
         cl_mem Bz=clCreateBuffer(C,CL_MEM_READ_WRITE|CL_MEM_COPY_HOST_PTR,sizeof(z[0])*h,z.data(),nullptr);
