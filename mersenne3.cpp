@@ -758,23 +758,24 @@ __kernel void sub_kernel(__global GF*        z,
                          const uint           a)
 {
     uint borrow = a;
-    while (borrow != 0u) {
-        for (uint k = 0; k < n2; ++k) {
-            // récupère les deux parties 61-bits
-            ulong s0 = z[k].s0;
-            ulong s1 = z[k].s1;
-            // soustractions digitaires
-            ulong n0 = digit_sbc(s0, digit_width[2*k],   &borrow);
-            ulong n1 = digit_sbc(s1, digit_width[2*k+1], &borrow);
-            // mise à jour
-            z[k].s0 = n0;
-            z[k].s1 = n1;
-            z[k].t0 = (uint)n0;
-            z[k].t1 = (uint)n1;
-            if (borrow == 0u) break;
-        }
+    for (uint k = 0; k < n2 && borrow; ++k) {
+        ulong s0 = z[k].s0, s1 = z[k].s1;
+        uint  w0 = digit_width[2*k],
+              w1 = digit_width[2*k + 1];
+        ulong m0 = ((ulong)1 << w0) - 1ul,
+              m1 = ((ulong)1 << w1) - 1ul;
+        // soustraction sur le premier digit
+        ulong t0 = s0 - borrow;
+        borrow = (s0 < borrow) ? 1u : 0u;
+        z[k].s0 = t0 & m0;
+        if (!borrow) break;
+        // puis sur le second
+        ulong t1 = s1 - borrow;
+        borrow = (s1 < borrow) ? 1u : 0u;
+        z[k].s1 = t1 & m1;
     }
 }
+
 
 // is_zero_kernel : vérifie que tous les s0 sont 0
 __kernel void is_zero_kernel(__global const GF* z,
@@ -973,7 +974,7 @@ if (err != CL_SUCCESS) { }
                 clSetKernelArg(Kw, 1, sizeof(cl_mem),&wib_buf);
                 clEnqueueNDRangeKernel(Q,Kw,1,nullptr,&gs,nullptr,0,nullptr,nullptr);
                 clFinish(Q);
-                //debug_read(Q,Bz,h,">>>weight");
+                debug_read(Q,Bz,h,">>>weight");
             }
 
             { // forward radix-4
@@ -981,8 +982,8 @@ if (err != CL_SUCCESS) { }
                 for(; m>=1; m/=4, s*=4){
                     size_t gs=s*m;
                     //std::cout << "m=" << m << std::endl;
-                    //debug_read(Q,Bz,h,"Bz");
-                    //debug_read(Q,Bw,h,"Bw");
+                    debug_read(Q,Bz,h,"Bz");
+                    debug_read(Q,Bw,h,"Bw");
                     clSetKernelArg(Kf,0,sizeof(Bz),&Bz);
                     clSetKernelArg(Kf,1,sizeof(Bw),&Bw);
                     clSetKernelArg(Kf,2,sizeof(int),&s);
@@ -991,7 +992,7 @@ if (err != CL_SUCCESS) { }
                     clEnqueueNDRangeKernel(Q,Kf,1,nullptr,&gs,nullptr,0,nullptr,nullptr);
                     clFinish(Q);
                 }
-                //debug_read(Q,Bz,h,">>>forward");
+                debug_read(Q,Bz,h,">>>forward");
             }
             // === début sqr2() radix-2 ===
             //const int n4 = int(h / 2);
@@ -1004,7 +1005,7 @@ if (err != CL_SUCCESS) { }
                 clSetKernelArg(Kf2, 2, sizeof(n4), &n4);
                 clEnqueueNDRangeKernel(Q, Kf2, 1, nullptr, &gs1, nullptr, 0, nullptr, nullptr);
                 clFinish(Q);
-                //debug_read(Q, Bz, h, "forward (sqr2)");
+                debug_read(Q, Bz, h, "forward (sqr2)");
             }*/
 
             {
@@ -1015,7 +1016,7 @@ if (err != CL_SUCCESS) { }
                 clSetKernelArg(Ks, 2, sizeof(int), &nin);
                 clEnqueueNDRangeKernel(Q, Ks, 1, nullptr, &gs2, nullptr, 0, nullptr, nullptr);
                 clFinish(Q);
-                //debug_read(Q, Bz, h, ">>>pointwise_sqr");
+                debug_read(Q, Bz, h, ">>>pointwise_sqr");
             }
 
             // 3) backward2
@@ -1026,7 +1027,7 @@ if (err != CL_SUCCESS) { }
                 clSetKernelArg(Kb2, 2, sizeof(n4), &n4);
                 clEnqueueNDRangeKernel(Q, Kb2, 1, nullptr, &gs3, nullptr, 0, nullptr, nullptr);
                 clFinish(Q);
-                //debug_read(Q, Bz, h, "backward (sqr2)");
+                debug_read(Q, Bz, h, "backward (sqr2)");
             }*/
             // === fin sqr2() radix-2 ===
 
@@ -1036,8 +1037,8 @@ if (err != CL_SUCCESS) { }
                 for(size_t m=m0, s=s0; s>=1; m*=4, s/=4){
                     size_t gs=s*m;
                     //std::cout << "m=" << m << std::endl;
-                    //debug_read(Q,Bz,h,"Bz");
-                    //debug_read(Q,Bw,h,"Bw");
+                    debug_read(Q,Bz,h,"Bz");
+                    debug_read(Q,Bw,h,"Bw");
                     clSetKernelArg(Kb,0,sizeof(Bz),&Bz);
                     clSetKernelArg(Kb,1,sizeof(Bw),&Bw);
                     clSetKernelArg(Kb,2,sizeof(int),&s);
@@ -1046,7 +1047,7 @@ if (err != CL_SUCCESS) { }
                     clEnqueueNDRangeKernel(Q,Kb,1,nullptr,&gs,nullptr,0,nullptr,nullptr);
                     clFinish(Q);
                 }
-                //debug_read(Q,Bz,h,">>>backward");
+                debug_read(Q,Bz,h,">>>backward");
             }
 
             { // unweight and normalize
@@ -1056,7 +1057,7 @@ if (err != CL_SUCCESS) { }
                 clSetKernelArg(Ku,2,sizeof(int),&ln);
                 clEnqueueNDRangeKernel(Q,Ku,1,nullptr,&gs,nullptr,0,nullptr,nullptr);
                 clFinish(Q);
-                //debug_read(Q,Bz,h,">>>unweight_norm");
+                debug_read(Q,Bz,h,">>>unweight_norm");
             }
 
                             {
@@ -1067,8 +1068,8 @@ if (err != CL_SUCCESS) { }
                 clSetKernelArg(Kc, 2, sizeof(cl_uint), &h);
                 clEnqueueNDRangeKernel(Q, Kc, 1, nullptr, &gs, nullptr, 0, nullptr, nullptr);
                 clFinish(Q);  
-                //debug_read(Q, Bz, h, ">>>carry");       // les valeurs doivent alors correspondre à la version CPU :contentReference[oaicite:1]{index=1}
-                ////debug_read(Q,Bz,h,"carry");
+                debug_read(Q, Bz, h, ">>>carry");       // les valeurs doivent alors correspondre à la version CPU :contentReference[oaicite:1]{index=1}
+                //debug_read(Q,Bz,h,"carry");
             }
         }
         // a : la valeur à soustraire
