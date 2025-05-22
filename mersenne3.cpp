@@ -122,6 +122,8 @@ public:
     static GF61 root_one(size_t n) {
         return GF61(Z61(H0), Z61(H1)).pow(ORDER / n);
     }
+    static uint8_t log2_root_two(const size_t n) { return uint8_t(((uint64_t(1) << 60) / n) % 61); }
+
 };
 
 class GF31 {
@@ -153,6 +155,8 @@ public:
     static GF31 root_one(size_t n) {
         return GF31(Z31(H0), Z31(H1)).pow(ORDER / n);
     }
+    static uint8_t log2_root_two(const size_t n) { return uint8_t(((uint64_t(1) << 30) / n) % 31); }
+
 };
 
 class GF61_31 {
@@ -194,7 +198,7 @@ static size_t bitrev(size_t i, size_t n) {
 
 const char* KC = R"CLC(
 typedef struct {
-    ulong hi, lo;
+    ulong lo,hi;
 } u128_fake;
 #pragma pack(push,1)
 typedef ulong  u64;
@@ -208,8 +212,9 @@ typedef struct {
 } GF;
 #pragma pack(pop)
 
-typedef struct { uint w61, w31; } IW;
-
+#pragma pack(push,1)
+typedef struct { int w61, w31; } IW;
+#pragma pack(pop)
 #define P61 (((u64)1<<61)-1)
 #define P31 (((u32)1<<31)-1)
 inline u128 mul_64x64_128(ulong a, ulong b) {
@@ -267,6 +272,26 @@ GF gf_mul(GF a,GF b){
     u32 X0=mul31(a.t0,b.t0), X1=mul31(a.t1,b.t1), Y0=mul31(a.t1,b.t0), Y1=mul31(a.t0,b.t1); 
     return (GF){sub61(x0,x1),add61(y0,y1),sub31(X0,X1),add31(Y0,Y1)};
 }
+inline u128 make_u128(ulong lo, ulong hi){ return (u128){lo,hi}; }
+inline u128 add_u128(u128 a, u128 b){
+    ulong lo = a.lo + b.lo;
+    ulong carry = (lo < a.lo);
+    return (u128){ lo, a.hi + b.hi + carry };
+}
+inline u128 shl_u128(u128 a, uint w){
+    return (u128){ a.lo << w, (a.hi << w) | (a.lo >> (64-w)) };
+}
+inline u128 rshift_u128(u128 a, uint w) {
+    if (w == 0) return a;
+    if (w < 64) {
+        ulong lo = (a.lo >> w) | (a.hi << (64 - w));
+        ulong hi =  a.hi >> w;
+        return (u128){ .hi = hi, .lo = lo };
+    } else {
+        ulong lo = a.hi >> (w - 64);
+        return (u128){ .hi = 0, .lo = lo };
+    }
+}
 
 inline ulong lshift_mod61(ulong x, uint s) {
     s %= 61;
@@ -275,6 +300,7 @@ inline ulong lshift_mod61(ulong x, uint s) {
     ulong hi = (x >> (61 - s));
     return add61(lo, hi);
 }
+
 
 inline ulong rshift_mod61(ulong x, uint s) {
     s %= 61;
@@ -308,39 +334,56 @@ inline GF rshift_GF(GF z, uint rs0, uint rs1, uint rt0, uint rt1)
         rshift_mod31(z.t1, rt1)
     };
 }
-
+inline GF lshift_GF(GF z,
+                    uint ls0, uint ls1,
+                    uint lt0, uint lt1)
+{
+    return (GF){
+        lshift_mod61(z.s0, ls0),
+        lshift_mod61(z.s1, ls1),
+        lshift_mod31(z.t0, lt0),
+        lshift_mod31(z.t1, lt1)
+    };
+}
 
 
 GF gf_addi(GF a, GF b){
     return (GF){
-        sub61(a.s0, b.s1),    // a0 - b1
-        add61(a.s1, b.s0),    // a1 + b0
-        sub31(a.t0, b.t1),    // a0 - b1
-        add31(a.t1, b.t0)     // a1 + b0
+        sub61(a.s0, b.s1),    
+        add61(a.s1, b.s0),    
+        sub31(a.t0, b.t1),    
+        add31(a.t1, b.t0)     
     };
 }
 GF gf_subi(GF a, GF b){
     return (GF){
-        add61(a.s0, b.s1),    // a0 + b1
-        sub61(a.s1, b.s0),    // a1 - b0
-        add31(a.t0, b.t1),    // a0 + b1
-        sub31(a.t1, b.t0)     // a1 - b0
+        add61(a.s0, b.s1),    
+        sub61(a.s1, b.s0),    
+        add31(a.t0, b.t1),    
+        sub31(a.t1, b.t0)     
     };
 }
-__kernel void weight(__global GF* z,__global const IW* w){
-    int i=get_global_id(0);
-    uint r61=w[i].w61, r31=w[i].w31;
-    u64 v0=z[i].s0, v1=z[i].s1;
-    u32 t0=z[i].t0, t1=z[i].t1;
-    u64 lo0=(v0<<r61)&P61, hi0=v0>>(61-r61);
-    u64 lo1=(v1<<r61)&P61, hi1=v1>>(61-r61);
-    z[i].s0=add61(lo0,hi0);
-    z[i].s1=add61(lo1,hi1);
-    u32 lo2=(t0<<r31)&P31, hi2=t0>>(31-r31);
-    u32 lo3=(t1<<r31)&P31, hi3=t1>>(31-r31);
-    z[i].t0=add31(lo2,hi2);
-    z[i].t1=add31(lo3,hi3);
+
+__kernel void weight(__global GF* z, __global const IW* w)
+{
+   
+    int i = get_global_id(0);
+     //printf("i=%d | w61=%u %u | w31=%u %u\n",i,w[2*i + 0].w61, w[2*i + 1].w61,w[2*i + 0].w31, w[2*i + 1].w31);
+       
+    uint rs0 = w[2*i + 0].w61;
+    uint rs1 = w[2*i + 1].w61;
+    uint rt0 = w[2*i + 0].w31;
+    uint rt1 = w[2*i + 1].w31;
+    //printf("i=%d | w61=%u %u | w31=%u %u | rs0=%u rs1=%u rt0=%u rt1=%u\n",i,w[2*i + 0].w61, w[2*i + 1].w61,w[2*i + 0].w31, w[2*i + 1].w31,rs0, rs1, rt0, rt1);
+    GF zi = z[i];
+    //printf(" Before: s0=%llu s1=%llu | t0=%u t1=%u\n",zi.s0, zi.s1, zi.t0, zi.t1);
+    z[i] = lshift_GF(zi, rs0, rs1, rt0, rt1);
+    zi = z[i];
+    //printf(" After : s0=%llu s1=%llu | t0=%u t1=%u\n",zi.s0, zi.s1, zi.t0, zi.t1);
+
+
 }
+
 
 __kernel void forward4(__global GF* z,
                        __global const GF* w,
@@ -579,9 +622,6 @@ __kernel void pointwise_sqr(__global GF* z,
 }
 
 
-
-
-
 __kernel void backward4(__global GF* z,
                         __global const GF* w,
                         int s,
@@ -591,134 +631,186 @@ __kernel void backward4(__global GF* z,
     int gid = get_global_id(0);
     int j   = gid / m;
     int i   = gid % m;
+
     if (j < s) {
         int b = j * (m << 2);
 
-        GF u0 = z[b + i];
+        GF u0 = z[b +   i];
         GF u1 = z[b +   m + i];
         GF u2 = z[b + 2*m + i];
         GF u3 = z[b + 3*m + i];
 
-        GF v0 = gf_add(u0, u1);        // u0 + u1
-        GF v1 = gf_sub(u0, u1);        // u0 - u1
-        GF v2 = gf_add(u2, u3);        // u2 + u3
-        GF v3 = gf_sub(u3, u2);        // u3 - u2   ← note l’inversion du signe
+        GF v0 = gf_add(  u0,   u1);
+        GF v1 = gf_sub(  u0,   u1);
+        GF v2 = gf_add(  u2,   u3);
+        GF v3 = gf_sub(  u3,   u2);
 
-        z[b +   i]     = gf_add(v0, v2);
+        GF z0 = gf_add(  v0,   v2);
+        GF z1 = gf_mulconj(gf_sub(  v0,   v2), w[s + j]);
+        GF z2 = gf_mulconj(gf_addi( v1,   v3), w[2*(s + j)]);
+        GF z3 = gf_mulconj(gf_subi( v1,   v3), w[(n>>1) + s + j]);
 
-        z[b + 2*m + i] = gf_mulconj(
-                             gf_sub(v0, v2),
-                             w[s + j]
-                         );
-
-        z[b +   m + i] = gf_mulconj(
-                             gf_addi(v1, v3),
-                             w[2*(s + j)]
-                         );
-
-        z[b + 3*m + i] = gf_mulconj(
-                             gf_subi(v1, v3),
-                             w[(n >> 1) + s + j]
-                         );
+        z[b +   i]     = z0;
+        z[b + 2*m + i] = z1;
+        z[b +   m + i] = z2;
+        z[b + 3*m + i] = z3;
     }
 }
+
+
 __kernel void unweight_norm(__global GF* z, __global const IW* w, int ln)
 {
     int i = get_global_id(0);
+     //printf("i=%d | w61=%u %u | w31=%u %u\n",i,       w[2*i + 0].w61, w[2*i + 1].w61, w[2*i + 0].w31, w[2*i + 1].w31);
     uint ln2 = ln + 2;
     uint rs0 = w[2*i + 0].w61 + ln2;
     uint rs1 = w[2*i + 1].w61 + ln2;
     uint rt0 = w[2*i + 0].w31 + ln2;
     uint rt1 = w[2*i + 1].w31 + ln2;
-    //printf("i=%d | ln=%d | w61=%u %u | w31=%u %u | rs0=%u rs1=%u rt0=%u rt1=%u\n",
-    //i, ln,
-    //w[2*i + 0].w61, w[2*i + 1].w61,
-    //w[2*i + 0].w31, w[2*i + 1].w31,
-    //rs0, rs1, rt0, rt1);
+    //printf("i=%d | ln=%d | w61=%u %u | w31=%u %u | rs0=%u rs1=%u rt0=%u rt1=%u\n",i, ln,    w[2*i + 0].w61, w[2*i + 1].w61,    w[2*i + 0].w31, w[2*i + 1].w31,rs0, rs1, rt0, rt1);
     GF zi = z[i];
-    //printf(" Before: s0=%llu s1=%llu | t0=%u t1=%u\n",
-    //zi.s0, zi.s1, zi.t0, zi.t1);
+    //printf(" Before: s0=%llu s1=%llu | t0=%u t1=%u\n",zi.s0, zi.s1, zi.t0, zi.t1);
     z[i] = rshift_GF(zi, rs0, rs1, rt0, rt1);
     zi = z[i];
-    //printf(" After : s0=%llu s1=%llu | t0=%u t1=%u\n",
-    // zi.s0, zi.s1, zi.t0, zi.t1);
+    //printf(" After : s0=%llu s1=%llu | t0=%u t1=%u\n",zi.s0, zi.s1, zi.t0, zi.t1);
 }
 
-
-inline u128 make_u128(ulong lo, ulong hi){ return (u128){lo,hi}; }
-inline u128 add_u128(u128 a, u128 b){
-    ulong lo = a.lo + b.lo;
-    ulong carry = (lo < a.lo);
-    return (u128){ lo, a.hi + b.hi + carry };
-}
-inline u128 shl_u128(u128 a, uint w){
-    return (u128){ a.lo << w, (a.hi << w) | (a.lo >> (64-w)) };
-}
-inline u128 rshift_u128(u128 a, uint w) {
-    if (w == 0) return a;
-    if (w < 64) {
-        ulong lo = (a.lo >> w) | (a.hi << (64 - w));
-        ulong hi =  a.hi >> w;
-        return (u128){ .hi = hi, .lo = lo };
-    } else {
-        ulong lo = a.hi >> (w - 64);
-        return (u128){ .hi = 0, .lo = lo };
-    }
-}
 
 inline ulong digit_adc(u128 lhs, uint w, __private u128 *carry){
-    u128 sum = add_u128(lhs, *carry);
+    u128 s = add_u128(lhs, *carry);
     ulong mask = ((ulong)1 << w) - 1;
-    ulong res  = sum.lo & mask;
-    *carry = rshift_u128(sum, w);
+    ulong res  = s.lo & mask;
+    *carry     = rshift_u128(s, w);
     return res;
 }
 
-__kernel void carry(__global GF*           z,
-                    __global const IW*     w_ib,        // inchangé
-                    __global const uint*   digit_width, // largeurs des digits
-                    const uint             n2)          // n2 = _n/2
+inline void garner_GF(const GF x, __private u128 *l0, __private u128 *l1){
+    u32 n31_0 = x.t0, n31_1 = x.t1;
+    u64 u0 = sub61(x.s0, n31_0), u1 = sub61(x.s1, n31_1);
+    
+    u64 lo0 = (u0 << 31) & P61, hi0 = u0 >> (61-31);
+    u64 lo1 = (u1 << 31) & P61, hi1 = u1 >> (61-31);
+
+    u0 = add61(u0, add61(lo0, hi0));
+    u1 = add61(u1, add61(lo1, hi1));
+
+    *l0 = make_u128((ulong)n31_0 + ((ulong)u0 << 31) - u0, 0);
+    *l1 = make_u128((ulong)n31_1 + ((ulong)u1 << 31) - u1, 0);
+}
+__kernel void carry(__global GF* z,
+                    __global const uint* digit_width,
+                    const uint n2)
 {
-    __private u128 c = make_u128(0,0);
-    for(uint k = 0; k < n2; ++k){
-        // — CRT (Garner)
-        u32 t0 = z[k].t0, t1 = z[k].t1;
-        ulong u0 = sub61(z[k].s0, t0), u1 = sub61(z[k].s1, t1);
-        ulong lo0 = (u0<<31)&P61, hi0 = u0>>(61-31);
-        u0 = add61(u0, add61(lo0,hi0));
-        ulong lo1 = (u1<<31)&P61, hi1 = u1>>(61-31);
-        u1 = add61(u1, add61(lo1,hi1));
-        u128 l0 = make_u128(t0 + ((ulong)u0<<31) - u0, 0);
-        u128 l1 = make_u128(t1 + ((ulong)u1<<31) - u1, 0);
-        uint w0 = digit_width[2*k], w1 = digit_width[2*k+1];
-        ulong n0 = digit_adc(l0, w0, &c);
-        ulong n1 = digit_adc(l1, w1, &c);
-        z[k].s0 = n0;  z[k].s1 = n1;
+    __private u128 c = make_u128(0, 0);
+    //printf("Carry start\n");
+
+    for (uint k = 0; k < n2; ++k) {
+        u128 L0, L1;
+        garner_GF(z[k], &L0, &L1);
+        uint w0 = digit_width[2 * k], w1 = digit_width[2 * k + 1];
+        ulong n0 = digit_adc(L0, w0, &c);
+        ulong n1 = digit_adc(L1, w1, &c);
+        z[k].s0 = n0; z[k].s1 = n1;
         z[k].t0 = (uint)n0; z[k].t1 = (uint)n1;
-        if (k < 4) {
-            printf("carry k=%u:  t0=%u, t1=%u,  l0.lo=%llu, l1.lo=%llu,  c.lo=%llu c.hi=%llu\n",
-           k, t0, t1,
-           (unsigned long long)l0.lo,
-           (unsigned long long)l1.lo,
-           (unsigned long long)c.lo,
-           (unsigned long long)c.hi);
-        }
+
+        //printf("k=%u | L0=(%llu,%llu) L1=(%llu,%llu) | w0=%u w1=%u | n0=%lu n1=%lu | c=(%llu,%llu)\n",k, L0.lo, L0.hi, L1.lo, L1.hi, w0, w1, n0, n1, c.lo, c.hi);
     }
-    while((c.lo|c.hi) != 0){
-        for(uint k = 0; k < n2; ++k){
-            uint w0 = digit_width[2*k], w1 = digit_width[2*k+1];
-            u128 l0 = make_u128(z[k].s0,0), l1 = make_u128(z[k].s1,0);
-            ulong n0 = digit_adc(l0, w0, &c);
-            ulong n1 = digit_adc(l1, w1, &c);
+
+    while ((c.lo | c.hi) != 0) {
+        //printf("Carry propagation loop | c=(%llu,%llu)\n", c.lo, c.hi);
+
+        for (uint k = 0; k < n2; ++k) {
+            u128 L0 = make_u128(z[k].s0, 0);
+            u128 L1 = make_u128(z[k].s1, 0);
+            uint w0 = digit_width[2 * k], w1 = digit_width[2 * k + 1];
+            ulong n0 = digit_adc(L0, w0, &c);
+            ulong n1 = digit_adc(L1, w1, &c);
             z[k].s0 = n0; z[k].s1 = n1;
             z[k].t0 = (uint)n0; z[k].t1 = (uint)n1;
-            if((c.lo|c.hi)==0) break;
+
+            //printf("k=%u | R0=%lu R1=%lu | w0=%u w1=%u | c=(%llu,%llu)\n",k, n0, n1, w0, w1, c.lo, c.hi);
+
+            if ((c.lo | c.hi) == 0) {
+                //printf("Carry cleared at k=%u\n", k);
+                break;
+            }
         }
     }
 
-
-
+    //printf("Carry end\n");
 }
+// Subtraction with borrow across a w-bit digit
+inline ulong digit_sbc(ulong lhs, uint w, __private uint *borrow) {
+    uint b = *borrow;
+    ulong mask = ((ulong)1 << w) - 1ul;
+    // soustraction de l’ancien borrow
+    ulong t = lhs - (ulong)b;
+    // nouveau borrow si underflow
+    *borrow = (lhs < (ulong)b) ? 1u : 0u;
+    // on ne garde que les w bits de poids faible
+    return t & mask;
+}
+
+// sub_kernel : soustrait `a` à tout z[0..n2-1], en propageant borrow
+__kernel void sub_kernel(__global GF*        z,
+                         __global const uint* digit_width,
+                         const uint           n2,
+                         const uint           a)
+{
+    uint borrow = a;
+    while (borrow != 0u) {
+        for (uint k = 0; k < n2; ++k) {
+            // récupère les deux parties 61-bits
+            ulong s0 = z[k].s0;
+            ulong s1 = z[k].s1;
+            // soustractions digitaires
+            ulong n0 = digit_sbc(s0, digit_width[2*k],   &borrow);
+            ulong n1 = digit_sbc(s1, digit_width[2*k+1], &borrow);
+            // mise à jour
+            z[k].s0 = n0;
+            z[k].s1 = n1;
+            z[k].t0 = (uint)n0;
+            z[k].t1 = (uint)n1;
+            if (borrow == 0u) break;
+        }
+    }
+}
+
+// is_zero_kernel : vérifie que tous les s0 sont 0
+__kernel void is_zero_kernel(__global const GF* z,
+                             const uint          n2,
+                             __global int*       flag_zero)
+{
+    for (uint k = 0; k < n2; ++k) {
+        if (z[k].s0 != 0ul) {
+            *flag_zero = 0;
+            return;
+        }
+    }
+}
+
+// is_Mp_kernel : vérifie que chaque (s0,s1)==(2^w0−1, 2^w1−1)
+__kernel void is_Mp_kernel(__global const GF*   z,
+                           __global const uint* digit_width,
+                           const uint           n2,
+                           __global int*        flag_mp)
+{
+    for (uint k = 0; k < n2; ++k) {
+        uint w0 = digit_width[2*k];
+        uint w1 = digit_width[2*k+1];
+        ulong mask0 = ((ulong)1 << w0) - 1ul;
+        ulong mask1 = ((ulong)1 << w1) - 1ul;
+        if (z[k].s0 != mask0 || z[k].s1 != mask1) {
+            *flag_mp = 0;
+            return;
+        }
+    }
+}
+
+
+
+
+
 
 
 )CLC";
@@ -740,7 +832,7 @@ void debug_read(cl_command_queue Q, cl_mem buf, size_t h, const std::string& sta
     std::cout << "\n";
 }
 
-int main(){
+int main(int argc, char* argv[]){
     cl_platform_id P; cl_uint pn;
     clGetPlatformIDs(1,&P,&pn);
     cl_device_id D; cl_uint dn;
@@ -766,12 +858,19 @@ int main(){
     cl_kernel Kf2 = clCreateKernel(PR, "forward2",   nullptr);
     cl_kernel Ks  = clCreateKernel(PR, "pointwise_sqr", nullptr);
     cl_kernel Kb2 = clCreateKernel(PR, "backward2",  nullptr);
+    cl_kernel Ksub    = clCreateKernel(PR, "sub_kernel",    nullptr);
+    cl_kernel Kisz    = clCreateKernel(PR, "is_zero_kernel",nullptr);
+    cl_kernel KisMp   = clCreateKernel(PR, "is_Mp_kernel",  nullptr);
 
     cl_kernel Kb=clCreateKernel(PR,"backward4",nullptr);
     cl_kernel Ku=clCreateKernel(PR,"unweight_norm",nullptr);
     cl_kernel Kc=clCreateKernel(PR,"carry",nullptr);
-
-    for(uint32_t p=7;p<=7;p+=2){
+    if (argc < 2) {
+        std::cerr << "Usage: " << argv[0] << " <start_p>\n";
+        return 1;
+    }
+    uint32_t start_p = static_cast<uint32_t>(std::atoi(argv[1]));
+    for(uint32_t p=start_p;p<=start_p;p+=2){
         
         bool isp=true;
         for(uint32_t d=3;d*d<=p;d+=2) if(p%d==0){isp=false;break;}
@@ -785,7 +884,7 @@ int main(){
         std::vector<IBWeight> iw_fwd(n), iw_inv(n);
         std::vector<int> dw(n);
 
-        z[0]=GF61_31(4,0);
+        z[0]=GF61_31(3,0);
         for(size_t i=1;i<h;++i) z[i]=GF61_31(0,0);
 
         for(size_t s=1;s<=h/2;s<<=1){
@@ -803,17 +902,25 @@ int main(){
         for(size_t j = 1; j < n; ++j){
             uint64_t qj = uint64_t(p) * j;
             uint32_t ceil_qj_n = uint32_t((qj + n - 1) / n);
-            dw[j-1] = uint8_t(ceil_qj_n - o);
+            const uint8_t c = uint8_t(ceil_qj_n - o);
+            dw[j-1] = c;
             o = ceil_qj_n;
         }
+        printf("digit_width = { ");
+        for (size_t j = 0; j < n; ++j) {
+            printf("%u ", dw[j]); 
+        }
+        printf("}\n");
+
         dw[n-1] = 0;
+
         iw_fwd[0]={0,0};
         for(size_t i=1;i<n;++i){
             uint64_t qj=uint64_t(p)*i;
             int c=int(((qj-1)/n+1)-((qj-1)/n));
             iw_fwd[i]={c,c};
         }
-        int lr2_61 = int(((uint64_t)1 << 60) / n % 61);
+/*        int lr2_61 = int(((uint64_t)1 << 60) / n % 61);
         int lr2_31 = int(((uint64_t)1 << 30) / n % 31);
         for (size_t i = 0; i < n; ++i) {
             uint64_t qj = uint64_t(p) * i;
@@ -822,7 +929,32 @@ int main(){
             iw_inv[i].w31 = int((lr2_31 * (n - r)) % 31);
         }
         iw_inv[0].w61 = 0;
-        iw_inv[0].w31 = 0;
+        iw_inv[0].w31 = 0;*/
+std::vector<IBWeight> w_ib(n);
+const uint8_t lr2_61 = GF61::log2_root_two(n);
+const uint8_t lr2_31 = GF31::log2_root_two(n);
+for (size_t j = 0; j < n; ++j) {
+    uint64_t qj = uint64_t(p) * j;
+    uint32_t r  = uint32_t(qj % n);
+    const uint8_t w61 = uint8_t((lr2_61 * (n - r)) % 61);
+    const uint8_t w31 = uint8_t((lr2_31 * (n - r)) % 31);
+    w_ib[j] = { w61, w31 };
+}
+
+w_ib[0] = { 0, 0 };
+/*for(int j = 0; j < 8; ++j)
+  std::cout << "host w_ib["<<j<<"] = ("
+            << int(w_ib[j].w61) << "," << int(w_ib[j].w31) << ")\n";*/
+cl_int err;
+cl_mem wib_buf = clCreateBuffer(
+    C,
+    CL_MEM_READ_ONLY | CL_MEM_COPY_HOST_PTR,
+    sizeof(IBWeight) * n,
+    w_ib.data(),
+    &err
+);
+if (err != CL_SUCCESS) { }
+
 
         int flag=1;
         cl_mem Bz=clCreateBuffer(C,CL_MEM_READ_WRITE|CL_MEM_COPY_HOST_PTR,sizeof(z[0])*h,z.data(),nullptr);
@@ -834,14 +966,14 @@ int main(){
                     sizeof(dw[0]) * dw.size(),
                     dw.data(), nullptr);
         cl_mem Bf=clCreateBuffer(C,CL_MEM_READ_WRITE|CL_MEM_COPY_HOST_PTR,sizeof(flag),&flag,nullptr);
-        for (uint32_t iter = 0; iter < p-2; ++iter) {
+        for (uint32_t iter = 0; iter < p; ++iter) {
             { // weight
                 size_t gs=h;
                 clSetKernelArg(Kw,0,sizeof(Bz),&Bz);
-                clSetKernelArg(Kw,1,sizeof(Bfwd),&Bfwd);
+                clSetKernelArg(Kw, 1, sizeof(cl_mem),&wib_buf);
                 clEnqueueNDRangeKernel(Q,Kw,1,nullptr,&gs,nullptr,0,nullptr,nullptr);
                 clFinish(Q);
-                debug_read(Q,Bz,h,"weight");
+                //debug_read(Q,Bz,h,">>>weight");
             }
 
             { // forward radix-4
@@ -849,8 +981,8 @@ int main(){
                 for(; m>=1; m/=4, s*=4){
                     size_t gs=s*m;
                     //std::cout << "m=" << m << std::endl;
-                    debug_read(Q,Bz,h,"Bz");
-                    debug_read(Q,Bw,h,"Bw");
+                    //debug_read(Q,Bz,h,"Bz");
+                    //debug_read(Q,Bw,h,"Bw");
                     clSetKernelArg(Kf,0,sizeof(Bz),&Bz);
                     clSetKernelArg(Kf,1,sizeof(Bw),&Bw);
                     clSetKernelArg(Kf,2,sizeof(int),&s);
@@ -859,7 +991,7 @@ int main(){
                     clEnqueueNDRangeKernel(Q,Kf,1,nullptr,&gs,nullptr,0,nullptr,nullptr);
                     clFinish(Q);
                 }
-                debug_read(Q,Bz,h,"forward");
+                //debug_read(Q,Bz,h,">>>forward");
             }
             // === début sqr2() radix-2 ===
             //const int n4 = int(h / 2);
@@ -872,7 +1004,7 @@ int main(){
                 clSetKernelArg(Kf2, 2, sizeof(n4), &n4);
                 clEnqueueNDRangeKernel(Q, Kf2, 1, nullptr, &gs1, nullptr, 0, nullptr, nullptr);
                 clFinish(Q);
-                debug_read(Q, Bz, h, "forward (sqr2)");
+                //debug_read(Q, Bz, h, "forward (sqr2)");
             }*/
 
             {
@@ -883,7 +1015,7 @@ int main(){
                 clSetKernelArg(Ks, 2, sizeof(int), &nin);
                 clEnqueueNDRangeKernel(Q, Ks, 1, nullptr, &gs2, nullptr, 0, nullptr, nullptr);
                 clFinish(Q);
-                debug_read(Q, Bz, h, "pointwise_sqr");
+                //debug_read(Q, Bz, h, ">>>pointwise_sqr");
             }
 
             // 3) backward2
@@ -894,18 +1026,18 @@ int main(){
                 clSetKernelArg(Kb2, 2, sizeof(n4), &n4);
                 clEnqueueNDRangeKernel(Q, Kb2, 1, nullptr, &gs3, nullptr, 0, nullptr, nullptr);
                 clFinish(Q);
-                debug_read(Q, Bz, h, "backward (sqr2)");
+                //debug_read(Q, Bz, h, "backward (sqr2)");
             }*/
             // === fin sqr2() radix-2 ===
 
 
             { // inverse radix-4
-                size_t m0 = 1, s0 = h;
+                size_t m0 = 1, s0 = h/4;
                 for(size_t m=m0, s=s0; s>=1; m*=4, s/=4){
                     size_t gs=s*m;
                     //std::cout << "m=" << m << std::endl;
-                    debug_read(Q,Bz,h,"Bz");
-                    debug_read(Q,Bw,h,"Bw");
+                    //debug_read(Q,Bz,h,"Bz");
+                    //debug_read(Q,Bw,h,"Bw");
                     clSetKernelArg(Kb,0,sizeof(Bz),&Bz);
                     clSetKernelArg(Kb,1,sizeof(Bw),&Bw);
                     clSetKernelArg(Kb,2,sizeof(int),&s);
@@ -914,36 +1046,59 @@ int main(){
                     clEnqueueNDRangeKernel(Q,Kb,1,nullptr,&gs,nullptr,0,nullptr,nullptr);
                     clFinish(Q);
                 }
-                debug_read(Q,Bz,h,"backward");
+                //debug_read(Q,Bz,h,">>>backward");
             }
 
             { // unweight and normalize
                 size_t gs=h;
                 clSetKernelArg(Ku,0,sizeof(Bz),&Bz);
-                clSetKernelArg(Ku,1,sizeof(Binv),&Binv);
+                clSetKernelArg(Ku, 1, sizeof(cl_mem), &wib_buf);
                 clSetKernelArg(Ku,2,sizeof(int),&ln);
                 clEnqueueNDRangeKernel(Q,Ku,1,nullptr,&gs,nullptr,0,nullptr,nullptr);
                 clFinish(Q);
-                debug_read(Q,Bz,h,"unweight_norm");
+                //debug_read(Q,Bz,h,">>>unweight_norm");
             }
 
                             {
                 size_t gs = 1;
                 clSetKernelArg(Kc, 0, sizeof(Bz),   &Bz);
-                clSetKernelArg(Kc, 1, sizeof(Binv), &Binv);
-                clSetKernelArg(Kc, 2, sizeof(BdW),   &BdW);
-                clSetKernelArg(Kc, 3, sizeof(cl_uint), &h);
+                //clSetKernelArg(Kc, 1, sizeof(Binv), &Binv);
+                clSetKernelArg(Kc, 1, sizeof(BdW),   &BdW);
+                clSetKernelArg(Kc, 2, sizeof(cl_uint), &h);
                 clEnqueueNDRangeKernel(Q, Kc, 1, nullptr, &gs, nullptr, 0, nullptr, nullptr);
                 clFinish(Q);  
-                debug_read(Q, Bz, h, "carry");       // les valeurs doivent alors correspondre à la version CPU :contentReference[oaicite:1]{index=1}
-                //debug_read(Q,Bz,h,"carry");
+                //debug_read(Q, Bz, h, ">>>carry");       // les valeurs doivent alors correspondre à la version CPU :contentReference[oaicite:1]{index=1}
+                ////debug_read(Q,Bz,h,"carry");
             }
         }
+        // a : la valeur à soustraire
+        debug_read(Q, Bz, h, ">>>end"); 
+        
+        uint32_t a = 9;
+        clSetKernelArg(Ksub, 0, sizeof(cl_mem), &Bz);
+        clSetKernelArg(Ksub, 1, sizeof(cl_mem), &BdW);
+        clSetKernelArg(Ksub, 2, sizeof(cl_uint), &h);
+        clSetKernelArg(Ksub, 3, sizeof(cl_uint), &a);
+        clEnqueueNDRangeKernel(Q, Ksub, 1, nullptr, nullptr, nullptr, 0, nullptr, nullptr);
+        clFinish(Q);
 
-        clEnqueueReadBuffer(Q,Bf,CL_TRUE,0,sizeof(flag),&flag,0,nullptr,nullptr);
-        if(flag==1){
-            std::cout<<"p="<<p<<" flag="<<flag<<"\n";
-        }
+        int flag_zero = 1;
+        cl_mem Bfz = clCreateBuffer(C, CL_MEM_READ_WRITE|CL_MEM_COPY_HOST_PTR,
+                                    sizeof(flag_zero), &flag_zero, nullptr);
+
+        size_t gs1 = 1;
+        clSetKernelArg(Kisz, 0, sizeof(cl_mem), &Bz);
+        clSetKernelArg(Kisz, 1, sizeof(cl_uint), &h);
+        clSetKernelArg(Kisz, 2, sizeof(cl_mem), &Bfz);
+        clEnqueueNDRangeKernel(Q, Kisz, 1, nullptr, &gs1, nullptr, 0, nullptr, nullptr);
+        clFinish(Q);
+        clEnqueueReadBuffer(Q, Bfz, CL_TRUE, 0, sizeof(flag_zero), &flag_zero, 0, nullptr, nullptr);
+        // flag_zero vaut 1 si tout s0==0, 0 sinon
+
+        debug_read(Q, Bz, h, ">>>end after sub check"); 
+        
+        std::cout<<"p="<<p<<" flag="<<flag_zero<<"\n";
+        
 
         clReleaseMemObject(Bz);
         clReleaseMemObject(Bw);
