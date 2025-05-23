@@ -699,6 +699,56 @@ inline void garner_GF(const GF x, __private u128 *l0, __private u128 *l1){
     *l0 = make_u128((ulong)n31_0 + ((ulong)u0 << 31) - u0, 0);
     *l1 = make_u128((ulong)n31_1 + ((ulong)u1 << 31) - u1, 0);
 }
+
+
+__kernel void carry_end(__global GF* z,
+                           __global const uint* digit_width,
+                           const uint n2)
+{
+    __private u128 c = make_u128(1, 0);
+    for (uint k = 0; k < n2; ++k) {
+        u128 L0, L1;
+        garner_GF(z[k], &L0, &L1);
+
+        uint w0 = digit_width[2*k];
+        uint w1 = digit_width[2*k + 1];
+
+        ulong n0 = digit_adc(L0, w0, &c);
+        ulong n1 = digit_adc(L1, w1, &c);
+
+        z[k].s0 = n0;  z[k].s1 = n1;
+        z[k].t0 = (uint)n0;  z[k].t1 = (uint)n1;
+
+        if ((c.lo | c.hi) == 0) break;
+    }
+
+    uint borrow = 1;
+    for (uint k = 0; k < n2; ++k) {
+        uint w0 = digit_width[2*k];
+        uint w1 = digit_width[2*k + 1];
+
+        ulong v0 = z[k].s0;
+        ulong mask0 = ((ulong)1 << w0) - 1;
+        bool b0 = (v0 < borrow);
+        ulong r0 = v0 - borrow + (b0 ? ((ulong)1 << w0) : 0);
+        z[k].s0 = r0 & mask0;
+
+        ulong v1 = z[k].s1;
+        ulong mask1 = ((ulong)1 << w1) - 1;
+        bool b1 = (v1 < (uint)b0);
+        ulong r1 = v1 - (uint)b0 + (b1 ? ((ulong)1 << w1) : 0);
+        z[k].s1 = r1 & mask1;
+
+        borrow = b1 ? 1u : 0u;
+
+        z[k].t0 = (uint)z[k].s0;
+        z[k].t1 = (uint)z[k].s1;
+
+        if (borrow == 0) break;
+    }
+}
+
+
 __kernel void carry(__global GF* z,
                     __global const uint* digit_width,
                     const uint n2)
@@ -952,6 +1002,7 @@ int main(int argc, char* argv[]){
     cl_kernel Kb=clCreateKernel(PR,"backward4",nullptr);
     cl_kernel Ku=clCreateKernel(PR,"unweight_norm",nullptr);
     cl_kernel Kc=clCreateKernel(PR,"carry",nullptr);
+    cl_kernel Kce=clCreateKernel(PR,"carry_end",nullptr);
     if (argc < 2) {
         std::cerr << "Usage: " << argv[0] << " <start_p>\n";
         return 1;
@@ -1186,6 +1237,16 @@ if (err != CL_SUCCESS) { }
             if(iter%800==0){
                 clFinish(Q);
             }
+        }
+       {
+                size_t gs = 1;
+                clSetKernelArg(Kce, 0, sizeof(Bz),   &Bz);
+                clSetKernelArg(Kce, 1, sizeof(BdW),   &BdW);
+                clSetKernelArg(Kce, 2, sizeof(cl_uint), &h);
+                clEnqueueNDRangeKernel(Q, Kce, 1, nullptr, &gs, nullptr, 0, nullptr, nullptr);
+                //clFinish(Q);  
+                //debug_read(Q, Bz, h, ">>>carry");
+                
         }
         //std::cout << "Loop is done check result in progress\n";
         clFinish(Q);
