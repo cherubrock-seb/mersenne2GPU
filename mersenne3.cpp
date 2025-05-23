@@ -929,13 +929,25 @@ int main(int argc, char* argv[]){
     uint32_t start_p = static_cast<uint32_t>(std::atoi(argv[1]));
     for(uint32_t p=start_p;p<=start_p;p+=2){
         
-        bool isp=true;
+        /*bool isp=true;
         for(uint32_t d=3;d*d<=p;d+=2) if(p%d==0){isp=false;break;}
-        if(!isp) continue;
+        if(!isp) continue;*/
 
         int ln=2, w;
         do{++ln; w=int(p>>ln);}while(ln+2*(w+1)>=92);
-        size_t n=1u<<ln, h=n>>1;
+
+        size_t n = 1u << ln;
+        size_t h = n >> 1;
+
+        // Si n n'est pas de la forme 2 * 4^x, on corrige
+        if ((ln & 1) == 0) { 
+            ++ln;
+            n = 1u << ln;
+            h = n >> 1;
+        }
+
+        
+
         std::cout << "TRANSFORM SIZE = " << n <<std::endl;
 
         std::vector<GF61_31> z(h), wv(5*h/2);
@@ -1032,7 +1044,7 @@ if (err != CL_SUCCESS) { }
                 clSetKernelArg(Kw,0,sizeof(Bz),&Bz);
                 clSetKernelArg(Kw, 1, sizeof(cl_mem),&wib_buf);
                 clEnqueueNDRangeKernel(Q,Kw,1,nullptr,&gs,nullptr,0,nullptr,nullptr);
-                clFinish(Q);
+                //clFinish(Q);
                 //debug_read(Q,Bz,h,">>>weight");
             }
 
@@ -1049,26 +1061,27 @@ if (err != CL_SUCCESS) { }
                     clSetKernelArg(Kf,3,sizeof(int),&m);
                     clSetKernelArg(Kf,4,sizeof(int),&n);
                     clEnqueueNDRangeKernel(Q,Kf,1,nullptr,&gs,nullptr,0,nullptr,nullptr);
-                    clFinish(Q);
+                    //clFinish(Q);
                     
                     //debug_read(Q,Bz,h,">>>forward4");
                 }
                
             }
+            
             // === début sqr2() radix-2 ===
-            //const int n4 = int(h / 2);
+/*            const int n4 = int(h / 2);
 
             // 1) forward2
-            /*{
-                size_t gs1 = size_t(h);
+            {
+                size_t gs1 = size_t(h/2);
                 clSetKernelArg(Kf2, 0, sizeof(Bz), &Bz);
                 clSetKernelArg(Kf2, 1, sizeof(Bw), &Bw);
                 clSetKernelArg(Kf2, 2, sizeof(n4), &n4);
                 clEnqueueNDRangeKernel(Q, Kf2, 1, nullptr, &gs1, nullptr, 0, nullptr, nullptr);
-                clFinish(Q);
+                //clFinish(Q);
                 //debug_read(Q, Bz, h, "forward (sqr2)");
-            }*/
-
+            }
+*/
             {
                 size_t gs2 = h;
                 clSetKernelArg(Ks, 0, sizeof(cl_mem), &Bz);
@@ -1076,28 +1089,28 @@ if (err != CL_SUCCESS) { }
                 int nin = int(n);
                 clSetKernelArg(Ks, 2, sizeof(int), &nin);
                 clEnqueueNDRangeKernel(Q, Ks, 1, nullptr, &gs2, nullptr, 0, nullptr, nullptr);
-                clFinish(Q);
+                //clFinish(Q);
                 //debug_read(Q, Bz, h, ">>>pointwise_sqr");
             }
-
+/*
             // 3) backward2
-            /*{
-                size_t gs3 = size_t(h); 
+            {
+                size_t gs3 = size_t(h/2); 
                 clSetKernelArg(Kb2, 0, sizeof(Bz), &Bz);
                 clSetKernelArg(Kb2, 1, sizeof(Bw), &Bw);
-                clSetKernelArg(Kb2, 2, sizeof(n4), &n4);
+                clSetKernelArg(Kb2, 2, sizeof(n), &n4);
                 clEnqueueNDRangeKernel(Q, Kb2, 1, nullptr, &gs3, nullptr, 0, nullptr, nullptr);
-                clFinish(Q);
+                //clFinish(Q);
                 //debug_read(Q, Bz, h, "backward (sqr2)");
-            }*/
+            }
             // === fin sqr2() radix-2 ===
 
-
+*/
             { // inverse radix-4
                 size_t m0 = 1, s0 = h/4;
                 for(size_t m=m0, s=s0; s>=1; m*=4, s/=4){
                     size_t gs=s*m;
-                    //std::cout << "m=" << m << std::endl;
+                    //std::cout << "gs=" << gs << std::endl;
                     //debug_read(Q,Bz,h,"Bz");
                     //debug_read(Q,Bw,h,"Bw");
                     clSetKernelArg(Kb,0,sizeof(Bz),&Bz);
@@ -1106,7 +1119,7 @@ if (err != CL_SUCCESS) { }
                     clSetKernelArg(Kb,3,sizeof(int),&m);
                     clSetKernelArg(Kb,4,sizeof(int),&n);
                     clEnqueueNDRangeKernel(Q,Kb,1,nullptr,&gs,nullptr,0,nullptr,nullptr);
-                    clFinish(Q);
+                    //clFinish(Q);
                     //debug_read(Q,Bz,h,">>>backward4");
                 }
                 
@@ -1118,7 +1131,7 @@ if (err != CL_SUCCESS) { }
                 clSetKernelArg(Ku, 1, sizeof(cl_mem), &wib_buf);
                 clSetKernelArg(Ku,2,sizeof(int),&ln);
                 clEnqueueNDRangeKernel(Q,Ku,1,nullptr,&gs,nullptr,0,nullptr,nullptr);
-                clFinish(Q);
+                //clFinish(Q);
                 //debug_read(Q,Bz,h,">>>unweight_norm");
             }
 
@@ -1128,13 +1141,16 @@ if (err != CL_SUCCESS) { }
                 clSetKernelArg(Kc, 1, sizeof(BdW),   &BdW);
                 clSetKernelArg(Kc, 2, sizeof(cl_uint), &h);
                 clEnqueueNDRangeKernel(Q, Kc, 1, nullptr, &gs, nullptr, 0, nullptr, nullptr);
-                clFinish(Q);  
+                //clFinish(Q);  
                 //debug_read(Q, Bz, h, ">>>carry");
                 
             }
+            if(iter%400==0){
+                clFinish(Q);
+            }
         }
         std::cout << "Loop is done \n";
-        
+        clFinish(Q);
         //debug_read(Q, Bz, h, ">>>end"); 
         std::vector<GF61_31> host_z(h);
         cl_int err2 = clEnqueueReadBuffer(
