@@ -850,6 +850,35 @@ static uint64_t digit_sbc_host(uint64_t lhs, uint8_t w, uint32_t & borrow)
     return r;
 }
 
+static std::vector<GF61_31>
+subtract_a(const std::vector<GF61_31>& host_z,
+           const std::vector<int>& digit_width,
+           uint32_t a)
+{
+    size_t n2 = host_z.size();
+    std::vector<GF61_31> tmp = host_z;
+
+    uint32_t borrow = a;
+    while (borrow != 0) {
+        for (size_t k = 0; k < n2; ++k) {
+            uint64_t s0 = tmp[k].g61.s0();
+            uint64_t s1 = tmp[k].g61.s1();
+            s0 = digit_sbc_host(s0, digit_width[2*k],   borrow);
+            s1 = digit_sbc_host(s1, digit_width[2*k+1], borrow);
+            tmp[k] = GF61_31(s0, s1);
+            if (borrow == 0) break;
+        }
+    }
+    return tmp;
+}
+
+static std::vector<GF61_31>
+subtract_9(const std::vector<GF61_31>& host_z,
+           const std::vector<int>& digit_width)
+{
+    return subtract_a(host_z, digit_width, /*a=*/9u);
+}
+
 bool verify_equals(const std::vector<GF61_31>& host_z,
                    const std::vector<int>& digit_width,
                    uint32_t a)
@@ -1057,7 +1086,9 @@ if (err != CL_SUCCESS) { }
             { // forward radix-4
                 size_t m=h/4, s=1;
                 for(; m>=1; m/=4, s*=4){
-                    size_t gs=s*m;
+
+                    //std::cout << "radix4" << std::endl;
+                    size_t gs=h/2;
                     //std::cout << "m=" << m << std::endl;
                     //debug_read(Q,Bz,h,"Bz");
                     //debug_read(Q,Bw,h,"Bw");
@@ -1115,7 +1146,8 @@ if (err != CL_SUCCESS) { }
             { // inverse radix-4
                 size_t m0 = 1, s0 = h/4;
                 for(size_t m=m0, s=s0; s>=1; m*=4, s/=4){
-                    size_t gs=s*m;
+                    size_t gs=h/2;
+                    //std::cout << "inv radix4" << std::endl;
                     //std::cout << "gs=" << gs << std::endl;
                     //debug_read(Q,Bz,h,"Bz");
                     //debug_read(Q,Bw,h,"Bw");
@@ -1192,7 +1224,12 @@ if (err != CL_SUCCESS) { }
         }
         std::cout<<"p="<<p<<"\n";
         
+        auto z_minus_9 = subtract_9(host_z, dw);
 
+       
+        if (verify_is_Mp(z_minus_9, /*digit_width=*/dw)) {
+            std::cout << "z - 9 = Mp\n";
+        }
         clReleaseMemObject(Bz);
         clReleaseMemObject(Bw);
         clReleaseMemObject(Bfwd);
