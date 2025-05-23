@@ -569,8 +569,8 @@ __kernel void backward2(__global GF* z,
 }
 
 
-
-__kernel void pointwise_sqr(__global GF* z,
+//forward2, sqr, backward2
+__kernel void forward_2_sqr_backward2(__global GF* z,
                             __global const GF* w_base,
                             const uint n)
 {
@@ -871,6 +871,7 @@ bool verify_equals(const std::vector<GF61_31>& host_z,
     for (auto &v : tmp) {
         if (v.g61.s0() != 0) return false;
     }
+    
     return true;
 }
 
@@ -913,7 +914,7 @@ int main(int argc, char* argv[]){
     cl_kernel Kw=clCreateKernel(PR,"weight",nullptr);
     cl_kernel Kf=clCreateKernel(PR,"forward4",nullptr);
     cl_kernel Kf2 = clCreateKernel(PR, "forward2",   nullptr);
-    cl_kernel Ks  = clCreateKernel(PR, "pointwise_sqr", nullptr);
+    cl_kernel Ks  = clCreateKernel(PR, "forward_2_sqr_backward2", nullptr);
     cl_kernel Kb2 = clCreateKernel(PR, "backward2",  nullptr);
     cl_kernel Ksub    = clCreateKernel(PR, "sub_kernel",    nullptr);
     cl_kernel Kisz    = clCreateKernel(PR, "is_zero_kernel",nullptr);
@@ -933,18 +934,23 @@ int main(int argc, char* argv[]){
         for(uint32_t d=3;d*d<=p;d+=2) if(p%d==0){isp=false;break;}
         if(!isp) continue;*/
 
-        int ln=2, w;
-        do{++ln; w=int(p>>ln);}while(ln+2*(w+1)>=92);
-
-        size_t n = 1u << ln;
-        size_t h = n >> 1;
-
-        // Si n n'est pas de la forme 2 * 4^x, on corrige
-        if ((ln & 1) == 0) { 
+        int ln = 2, w;
+        do {
             ++ln;
-            n = 1u << ln;
-            h = n >> 1;
+            w = int(p >> ln);
+        } while (ln + 2 * (w + 1) >= 92);
+
+        if ((ln & 1) == 0) {
+            ++ln;
         }
+
+        size_t h = size_t{1} << (ln - 1);  
+        size_t n = h << 1;                 
+        std::cout << "ln = " << ln 
+                << ", h = " << h 
+                << " (power of 4), n = " << n 
+                << std::endl;
+
 
         
 
@@ -1145,12 +1151,14 @@ if (err != CL_SUCCESS) { }
                 //debug_read(Q, Bz, h, ">>>carry");
                 
             }
-            if(iter%400==0){
+            if(iter%800==0){
                 clFinish(Q);
             }
         }
-        std::cout << "Loop is done \n";
+        //std::cout << "Loop is done check result in progress\n";
         clFinish(Q);
+        std::cout << "Loop is done check result in progress\n";
+        
         //debug_read(Q, Bz, h, ">>>end"); 
         std::vector<GF61_31> host_z(h);
         cl_int err2 = clEnqueueReadBuffer(
@@ -1162,6 +1170,12 @@ if (err != CL_SUCCESS) { }
             host_z.data(),
             0, nullptr, nullptr
         );
+
+        /*for(size_t i = 0; i < h; ++i) {
+            std::cout << " | z[" << i << "] = ("
+                    << host_z[i].g61.s0() << "," << host_z[i].g61.s1() << ")/("
+                    << host_z[i].g31.s0() << "," << host_z[i].g31.s1() << ")";
+        }*/
         if (err2 != CL_SUCCESS) {
             std::cerr << "Erreur clEnqueueReadBuffer pour Bz : " << err2 << "\n";
             std::exit(1);
