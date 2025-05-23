@@ -160,6 +160,7 @@ public:
 };
 
 class GF61_31 {
+    
 public:
     GF61 g61;
     GF31 g31;
@@ -185,6 +186,7 @@ public:
     static GF61_31 root_one(size_t n) {
         return GF61_31(GF61::root_one(n), GF31::root_one(n));
     }
+    
 };
 
 struct IBWeight { int w61, w31; };
@@ -396,9 +398,9 @@ __kernel void forward4(__global GF* z,
     int i   = gid % m;
 
     if (gid == 0) {
-        //printf("forward4 params: s=%d\n", s);
-        //printf("forward4 params: m=%d\n", m);
-        //printf("forward4 params: n=%d\n", n);
+        ////printf("forward4 params: s=%d\n", s);
+        ////printf("forward4 params: m=%d\n", m);
+        ////printf("forward4 params: n=%d\n", n);
     }
 
     if (j < s) {
@@ -409,31 +411,31 @@ __kernel void forward4(__global GF* z,
         GF u2 = gf_mul(z[b + 2 * m + i], w[s + j]);
         GF u3 = gf_mul(z[b + 3 * m + i], w[(n >> 1) + s + j]);
 
-        //printf("gid=%d j=%d i=%d\n", gid, j, i);
+        ////printf("gid=%d j=%d i=%d\n", gid, j, i);
 
         /* u0 */
-        //printf(" u0.s0=%u\n", (unsigned int)u0.s0);
-        //printf(" u0.s1=%u\n", (unsigned int)u0.s1);
-        //printf(" u0.t0=%u\n",           u0.t0);
-        //printf(" u0.t1=%u\n",           u0.t1);
+        ////printf(" u0.s0=%u\n", (unsigned int)u0.s0);
+        ////printf(" u0.s1=%u\n", (unsigned int)u0.s1);
+        ////printf(" u0.t0=%u\n",           u0.t0);
+        ////printf(" u0.t1=%u\n",           u0.t1);
 
         /* u1 */
-        //printf(" u1.s0=%u\n", (unsigned int)u1.s0);
-        //printf(" u1.s1=%u\n", (unsigned int)u1.s1);
-        //printf(" u1.t0=%u\n",           u1.t0);
-        //printf(" u1.t1=%u\n",           u1.t1);
+        ////printf(" u1.s0=%u\n", (unsigned int)u1.s0);
+        ////printf(" u1.s1=%u\n", (unsigned int)u1.s1);
+        ////printf(" u1.t0=%u\n",           u1.t0);
+        ////printf(" u1.t1=%u\n",           u1.t1);
 
         /* u2 */
-        //printf(" u2.s0=%u\n", (unsigned int)u2.s0);
-        //printf(" u2.s1=%u\n", (unsigned int)u2.s1);
-        //printf(" u2.t0=%u\n",           u2.t0);
-        //printf(" u2.t1=%u\n",           u2.t1);
+        ////printf(" u2.s0=%u\n", (unsigned int)u2.s0);
+        ////printf(" u2.s1=%u\n", (unsigned int)u2.s1);
+        ////printf(" u2.t0=%u\n",           u2.t0);
+        ////printf(" u2.t1=%u\n",           u2.t1);
 
         /* u3 */
-        //printf(" u3.s0=%u\n", (unsigned int)u3.s0);
-        //printf(" u3.s1=%u\n", (unsigned int)u3.s1);
-        //printf(" u3.t0=%u\n",           u3.t0);
-        //printf(" u3.t1=%u\n",           u3.t1);
+        ////printf(" u3.s0=%u\n", (unsigned int)u3.s0);
+        ////printf(" u3.s1=%u\n", (unsigned int)u3.s1);
+        ////printf(" u3.t0=%u\n",           u3.t0);
+        ////printf(" u3.t1=%u\n",           u3.t1);
 
         /* Calcul des v’s */
         GF v0 = gf_add(u0, u2);
@@ -442,28 +444,28 @@ __kernel void forward4(__global GF* z,
         GF v3 = gf_sub(u1, u3);
 
         /* v0 */
-        //printf(" v0.s0=%u\n", (unsigned int)v0.s0);
-        //printf(" v0.s1=%u\n", (unsigned int)v0.s1);
-        //printf(" v0.t0=%u\n",           v0.t0);
-        //printf(" v0.t1=%u\n",           v0.t1);
+        ////printf(" v0.s0=%u\n", (unsigned int)v0.s0);
+        ////printf(" v0.s1=%u\n", (unsigned int)v0.s1);
+        ////printf(" v0.t0=%u\n",           v0.t0);
+        ////printf(" v0.t1=%u\n",           v0.t1);
 
         /* v1 */
-        //printf(" v1.s0=%u\n", (unsigned int)v1.s0);
-        //printf(" v1.s1=%u\n", (unsigned int)v1.s1);
-        //printf(" v1.t0=%u\n",           v1.t0);
-        //printf(" v1.t1=%u\n",           v1.t1);
+        ////printf(" v1.s0=%u\n", (unsigned int)v1.s0);
+        ////printf(" v1.s1=%u\n", (unsigned int)v1.s1);
+        ////printf(" v1.t0=%u\n",           v1.t0);
+        ////printf(" v1.t1=%u\n",           v1.t1);
 
         /* v2 */
-        //printf(" v2.s0=%u\n", (unsigned int)v2.s0);
-        //printf(" v2.s1=%u\n", (unsigned int)v2.s1);
-        //printf(" v2.t0=%u\n",           v2.t0);
-        //printf(" v2.t1=%u\n",           v2.t1);
+        ////printf(" v2.s0=%u\n", (unsigned int)v2.s0);
+        ////printf(" v2.s1=%u\n", (unsigned int)v2.s1);
+        ////printf(" v2.t0=%u\n",           v2.t0);
+        ////printf(" v2.t1=%u\n",           v2.t1);
 
         /* v3 */
-        //printf(" v3.s0=%u\n", (unsigned int)v3.s0);
-        //printf(" v3.s1=%u\n", (unsigned int)v3.s1);
-        //printf(" v3.t0=%u\n",           v3.t0);
-        //printf(" v3.t1=%u\n",           v3.t1);
+        ////printf(" v3.s0=%u\n", (unsigned int)v3.s0);
+        ////printf(" v3.s1=%u\n", (unsigned int)v3.s1);
+        ////printf(" v3.t0=%u\n",           v3.t0);
+        ////printf(" v3.t1=%u\n",           v3.t1);
 
         GF z0 = gf_add(v0, v1);
         GF z1 = gf_sub(v0, v1);
@@ -471,31 +473,31 @@ __kernel void forward4(__global GF* z,
         GF z3 = gf_subi(v2, v3);
 
         /* write z0 */
-        //printf(" write z[%d].s0=%u\n", b + i,    (unsigned int)z0.s0);
-        //printf(" write z[%d].s1=%u\n", b + i,    (unsigned int)z0.s1);
-        //printf(" write z[%d].t0=%u\n", b + i,               z0.t0);
-        //printf(" write z[%d].t1=%u\n", b + i,               z0.t1);
+        ////printf(" write z[%d].s0=%u\n", b + i,    (unsigned int)z0.s0);
+        ////printf(" write z[%d].s1=%u\n", b + i,    (unsigned int)z0.s1);
+        ////printf(" write z[%d].t0=%u\n", b + i,               z0.t0);
+        ////printf(" write z[%d].t1=%u\n", b + i,               z0.t1);
         z[b + i] = z0;
 
         /* write z1 */
-        //printf(" write z[%d].s0=%u\n", b + m + i, (unsigned int)z1.s0);
-        //printf(" write z[%d].s1=%u\n", b + m + i, (unsigned int)z1.s1);
-        //printf(" write z[%d].t0=%u\n", b + m + i,           z1.t0);
-        //printf(" write z[%d].t1=%u\n", b + m + i,           z1.t1);
+        ////printf(" write z[%d].s0=%u\n", b + m + i, (unsigned int)z1.s0);
+        ////printf(" write z[%d].s1=%u\n", b + m + i, (unsigned int)z1.s1);
+        ////printf(" write z[%d].t0=%u\n", b + m + i,           z1.t0);
+        ////printf(" write z[%d].t1=%u\n", b + m + i,           z1.t1);
         z[b + m + i] = z1;
 
         /* write z2 */
-        //printf(" write z[%d].s0=%u\n", b + 2*m + i, (unsigned int)z2.s0);
-        //printf(" write z[%d].s1=%u\n", b + 2*m + i, (unsigned int)z2.s1);
-        //printf(" write z[%d].t0=%u\n", b + 2*m + i,           z2.t0);
-        //printf(" write z[%d].t1=%u\n", b + 2*m + i,           z2.t1);
+        ////printf(" write z[%d].s0=%u\n", b + 2*m + i, (unsigned int)z2.s0);
+        ////printf(" write z[%d].s1=%u\n", b + 2*m + i, (unsigned int)z2.s1);
+        ////printf(" write z[%d].t0=%u\n", b + 2*m + i,           z2.t0);
+        ////printf(" write z[%d].t1=%u\n", b + 2*m + i,           z2.t1);
         z[b + 2*m + i] = z2;
 
         /* write z3 */
-        //printf(" write z[%d].s0=%u\n", b + 3*m + i, (unsigned int)z3.s0);
-        //printf(" write z[%d].s1=%u\n", b + 3*m + i, (unsigned int)z3.s1);
-        //printf(" write z[%d].t0=%u\n", b + 3*m + i,           z3.t0);
-        //printf(" write z[%d].t1=%u\n", b + 3*m + i,           z3.t1);
+        ////printf(" write z[%d].s0=%u\n", b + 3*m + i, (unsigned int)z3.s0);
+        ////printf(" write z[%d].s1=%u\n", b + 3*m + i, (unsigned int)z3.s1);
+        ////printf(" write z[%d].t0=%u\n", b + 3*m + i,           z3.t0);
+        ////printf(" write z[%d].t1=%u\n", b + 3*m + i,           z3.t1);
         z[b + 3*m + i] = z3;
     }
 }
@@ -661,18 +663,18 @@ __kernel void backward4(__global GF* z,
 __kernel void unweight_norm(__global GF* z, __global const IW* w, int ln)
 {
     int i = get_global_id(0);
-     //printf("i=%d | w61=%u %u | w31=%u %u\n",i,       w[2*i + 0].w61, w[2*i + 1].w61, w[2*i + 0].w31, w[2*i + 1].w31);
+     ////printf("i=%d | w61=%u %u | w31=%u %u\n",i,       w[2*i + 0].w61, w[2*i + 1].w61, w[2*i + 0].w31, w[2*i + 1].w31);
     uint ln2 = ln + 2;
     uint rs0 = w[2*i + 0].w61 + ln2;
     uint rs1 = w[2*i + 1].w61 + ln2;
     uint rt0 = w[2*i + 0].w31 + ln2;
     uint rt1 = w[2*i + 1].w31 + ln2;
-    //printf("i=%d | ln=%d | w61=%u %u | w31=%u %u | rs0=%u rs1=%u rt0=%u rt1=%u\n",i, ln,    w[2*i + 0].w61, w[2*i + 1].w61,    w[2*i + 0].w31, w[2*i + 1].w31,rs0, rs1, rt0, rt1);
+    ////printf("i=%d | ln=%d | w61=%u %u | w31=%u %u | rs0=%u rs1=%u rt0=%u rt1=%u\n",i, ln,    w[2*i + 0].w61, w[2*i + 1].w61,    w[2*i + 0].w31, w[2*i + 1].w31,rs0, rs1, rt0, rt1);
     GF zi = z[i];
-    //printf(" Before: s0=%llu s1=%llu | t0=%u t1=%u\n",zi.s0, zi.s1, zi.t0, zi.t1);
+    ////printf(" Before: s0=%llu s1=%llu | t0=%u t1=%u\n",zi.s0, zi.s1, zi.t0, zi.t1);
     z[i] = rshift_GF(zi, rs0, rs1, rt0, rt1);
     zi = z[i];
-    //printf(" After : s0=%llu s1=%llu | t0=%u t1=%u\n",zi.s0, zi.s1, zi.t0, zi.t1);
+    ////printf(" After : s0=%llu s1=%llu | t0=%u t1=%u\n",zi.s0, zi.s1, zi.t0, zi.t1);
 }
 
 
@@ -702,7 +704,7 @@ __kernel void carry(__global GF* z,
                     const uint n2)
 {
     __private u128 c = make_u128(0, 0);
-    //printf("Carry start\n");
+   //printf("Carry start\n");
 
     for (uint k = 0; k < n2; ++k) {
         u128 L0, L1;
@@ -737,7 +739,7 @@ __kernel void carry(__global GF* z,
         }
     }
 
-    //printf("Carry end\n");
+    ////printf("Carry end\n");
 }
 // Subtraction with borrow across a w-bit digit
 inline ulong digit_sbc(ulong lhs, uint w, __private uint *borrow) {
@@ -758,24 +760,23 @@ __kernel void sub_kernel(__global GF*        z,
                          const uint           a)
 {
     uint borrow = a;
-    for (uint k = 0; k < n2 && borrow; ++k) {
-        ulong s0 = z[k].s0, s1 = z[k].s1;
-        uint  w0 = digit_width[2*k],
-              w1 = digit_width[2*k + 1];
-        ulong m0 = ((ulong)1 << w0) - 1ul,
-              m1 = ((ulong)1 << w1) - 1ul;
-        // soustraction sur le premier digit
-        ulong t0 = s0 - borrow;
-        borrow = (s0 < borrow) ? 1u : 0u;
-        z[k].s0 = t0 & m0;
-        if (!borrow) break;
-        // puis sur le second
-        ulong t1 = s1 - borrow;
-        borrow = (s1 < borrow) ? 1u : 0u;
-        z[k].s1 = t1 & m1;
+    while (borrow != 0u) {
+        for (uint k = 0; k < n2; ++k) {
+            // récupère les deux parties 61-bits
+            ulong s0 = z[k].s0;
+            ulong s1 = z[k].s1;
+            // soustractions digitaires
+            ulong n0 = digit_sbc(s0, digit_width[2*k],   &borrow);
+            ulong n1 = digit_sbc(s1, digit_width[2*k+1], &borrow);
+            // mise à jour
+            z[k].s0 = n0;
+            z[k].s1 = n1;
+            z[k].t0 = (uint)n0;
+            z[k].t1 = (uint)n1;
+            if (borrow == 0u) break;
+        }
     }
 }
-
 
 // is_zero_kernel : vérifie que tous les s0 sont 0
 __kernel void is_zero_kernel(__global const GF* z,
@@ -833,6 +834,61 @@ void debug_read(cl_command_queue Q, cl_mem buf, size_t h, const std::string& sta
     std::cout << "\n";
 }
 
+static constexpr uint64_t digit_sbc(const uint64_t lhs, const uint8_t digit_width, uint32_t & carry)
+{
+    const bool borrow = (lhs < carry);
+    const uint64_t r = lhs - carry + (borrow ? (uint64_t(1) << digit_width) : 0);
+    carry = borrow ? 1 : 0;
+    return r;
+}
+
+static uint64_t digit_sbc_host(uint64_t lhs, uint8_t w, uint32_t & borrow)
+{
+    bool  b = (lhs < borrow);
+    uint64_t r = lhs - borrow + (b ? (uint64_t(1) << w) : 0);
+    borrow = b ? 1u : 0u;
+    return r;
+}
+
+bool verify_equals(const std::vector<GF61_31>& host_z,
+                   const std::vector<int>& digit_width,
+                   uint32_t a)
+{
+    size_t n2 = host_z.size();
+    std::vector<GF61_31> tmp = host_z;
+
+    uint32_t borrow = a;
+    while (borrow != 0) {
+        for (size_t k = 0; k < n2; ++k) {
+            uint64_t s0 = tmp[k].g61.s0();
+            uint64_t s1 = tmp[k].g61.s1();
+            s0 = digit_sbc_host(s0, digit_width[2*k],   borrow);
+            s1 = digit_sbc_host(s1, digit_width[2*k+1], borrow);
+            tmp[k] = GF61_31(s0, s1);
+            if (borrow == 0) break;
+        }
+    }
+    for (auto &v : tmp) {
+        if (v.g61.s0() != 0) return false;
+    }
+    return true;
+}
+
+bool verify_is_Mp(const std::vector<GF61_31>& host_z,
+                  const std::vector<int>& digit_width)
+{
+    size_t n2 = host_z.size();
+    for (size_t k = 0; k < n2; ++k) {
+        uint64_t s0 = host_z[k].g61.s0();
+        uint64_t s1 = host_z[k].g61.s1();
+        uint64_t mask0 = ((uint64_t)1 << digit_width[2*k]) - 1;
+        uint64_t mask1 = ((uint64_t)1 << digit_width[2*k+1]) - 1;
+        if (s0 != mask0 || s1 != mask1) return false;
+    }
+    return true;
+}
+
+
 int main(int argc, char* argv[]){
     cl_platform_id P; cl_uint pn;
     clGetPlatformIDs(1,&P,&pn);
@@ -880,6 +936,7 @@ int main(int argc, char* argv[]){
         int ln=2, w;
         do{++ln; w=int(p>>ln);}while(ln+2*(w+1)>=92);
         size_t n=1u<<ln, h=n>>1;
+        std::cout << "TRANSFORM SIZE = " << n <<std::endl;
 
         std::vector<GF61_31> z(h), wv(5*h/2);
         std::vector<IBWeight> iw_fwd(n), iw_inv(n);
@@ -887,6 +944,7 @@ int main(int argc, char* argv[]){
 
         z[0]=GF61_31(3,0);
         for(size_t i=1;i<h;++i) z[i]=GF61_31(0,0);
+
 
         for(size_t s=1;s<=h/2;s<<=1){
             GF61_31 R=GF61_31::root_one(2*s);
@@ -899,21 +957,24 @@ int main(int argc, char* argv[]){
         for(size_t j=0,m=h/2;j<m;++j)
             wv[2*h+j]=RN.pow(bitrev(j,m));
 
-        uint64_t o = 0;
-        for(size_t j = 1; j < n; ++j){
-            uint64_t qj = uint64_t(p) * j;
-            uint32_t ceil_qj_n = uint32_t((qj + n - 1) / n);
-            const uint8_t c = uint8_t(ceil_qj_n - o);
-            dw[j-1] = c;
-            o = ceil_qj_n;
+        uint32_t o = 0;
+        const uint8_t q_n = uint8_t(p / n);
+        for (size_t j = 1; j <= n; ++j) {
+            uint64_t qj       = uint64_t(p) * j;
+            uint32_t ceil_qj  = uint32_t((qj - 1) / n + 1);
+            int      c        = int(ceil_qj - o);
+            // c doit être q_n ou q_n+1
+            dw[j - 1]         = c;
+            o                 = ceil_qj;
         }
-        printf("digit_width = { ");
-        for (size_t j = 0; j < n; ++j) {
-            printf("%u ", dw[j]); 
-        }
-        printf("}\n");
 
-        dw[n-1] = 0;
+        //printf("digit_width = { ");
+        for (size_t j = 0; j < n; ++j) {
+            //printf("%u ", dw[j]); 
+        }
+        //printf("}\n");
+
+        //dw[n-1] = 0;
 
         iw_fwd[0]={0,0};
         for(size_t i=1;i<n;++i){
@@ -955,8 +1016,6 @@ cl_mem wib_buf = clCreateBuffer(
     &err
 );
 if (err != CL_SUCCESS) { }
-
-
         int flag=1;
         cl_mem Bz=clCreateBuffer(C,CL_MEM_READ_WRITE|CL_MEM_COPY_HOST_PTR,sizeof(z[0])*h,z.data(),nullptr);
         cl_mem Bw=clCreateBuffer(C,CL_MEM_READ_ONLY|CL_MEM_COPY_HOST_PTR,sizeof(wv[0])*wv.size(),wv.data(),nullptr);
@@ -974,7 +1033,7 @@ if (err != CL_SUCCESS) { }
                 clSetKernelArg(Kw, 1, sizeof(cl_mem),&wib_buf);
                 clEnqueueNDRangeKernel(Q,Kw,1,nullptr,&gs,nullptr,0,nullptr,nullptr);
                 clFinish(Q);
-                debug_read(Q,Bz,h,">>>weight");
+                //debug_read(Q,Bz,h,">>>weight");
             }
 
             { // forward radix-4
@@ -982,8 +1041,8 @@ if (err != CL_SUCCESS) { }
                 for(; m>=1; m/=4, s*=4){
                     size_t gs=s*m;
                     //std::cout << "m=" << m << std::endl;
-                    debug_read(Q,Bz,h,"Bz");
-                    debug_read(Q,Bw,h,"Bw");
+                    //debug_read(Q,Bz,h,"Bz");
+                    //debug_read(Q,Bw,h,"Bw");
                     clSetKernelArg(Kf,0,sizeof(Bz),&Bz);
                     clSetKernelArg(Kf,1,sizeof(Bw),&Bw);
                     clSetKernelArg(Kf,2,sizeof(int),&s);
@@ -991,21 +1050,23 @@ if (err != CL_SUCCESS) { }
                     clSetKernelArg(Kf,4,sizeof(int),&n);
                     clEnqueueNDRangeKernel(Q,Kf,1,nullptr,&gs,nullptr,0,nullptr,nullptr);
                     clFinish(Q);
+                    
+                    //debug_read(Q,Bz,h,">>>forward4");
                 }
-                debug_read(Q,Bz,h,">>>forward");
+               
             }
             // === début sqr2() radix-2 ===
             //const int n4 = int(h / 2);
 
             // 1) forward2
             /*{
-                size_t gs1 = size_t(n4);
+                size_t gs1 = size_t(h);
                 clSetKernelArg(Kf2, 0, sizeof(Bz), &Bz);
                 clSetKernelArg(Kf2, 1, sizeof(Bw), &Bw);
                 clSetKernelArg(Kf2, 2, sizeof(n4), &n4);
                 clEnqueueNDRangeKernel(Q, Kf2, 1, nullptr, &gs1, nullptr, 0, nullptr, nullptr);
                 clFinish(Q);
-                debug_read(Q, Bz, h, "forward (sqr2)");
+                //debug_read(Q, Bz, h, "forward (sqr2)");
             }*/
 
             {
@@ -1016,18 +1077,18 @@ if (err != CL_SUCCESS) { }
                 clSetKernelArg(Ks, 2, sizeof(int), &nin);
                 clEnqueueNDRangeKernel(Q, Ks, 1, nullptr, &gs2, nullptr, 0, nullptr, nullptr);
                 clFinish(Q);
-                debug_read(Q, Bz, h, ">>>pointwise_sqr");
+                //debug_read(Q, Bz, h, ">>>pointwise_sqr");
             }
 
             // 3) backward2
             /*{
-                size_t gs3 = size_t(n4); 
+                size_t gs3 = size_t(h); 
                 clSetKernelArg(Kb2, 0, sizeof(Bz), &Bz);
                 clSetKernelArg(Kb2, 1, sizeof(Bw), &Bw);
                 clSetKernelArg(Kb2, 2, sizeof(n4), &n4);
                 clEnqueueNDRangeKernel(Q, Kb2, 1, nullptr, &gs3, nullptr, 0, nullptr, nullptr);
                 clFinish(Q);
-                debug_read(Q, Bz, h, "backward (sqr2)");
+                //debug_read(Q, Bz, h, "backward (sqr2)");
             }*/
             // === fin sqr2() radix-2 ===
 
@@ -1037,8 +1098,8 @@ if (err != CL_SUCCESS) { }
                 for(size_t m=m0, s=s0; s>=1; m*=4, s/=4){
                     size_t gs=s*m;
                     //std::cout << "m=" << m << std::endl;
-                    debug_read(Q,Bz,h,"Bz");
-                    debug_read(Q,Bw,h,"Bw");
+                    //debug_read(Q,Bz,h,"Bz");
+                    //debug_read(Q,Bw,h,"Bw");
                     clSetKernelArg(Kb,0,sizeof(Bz),&Bz);
                     clSetKernelArg(Kb,1,sizeof(Bw),&Bw);
                     clSetKernelArg(Kb,2,sizeof(int),&s);
@@ -1046,8 +1107,9 @@ if (err != CL_SUCCESS) { }
                     clSetKernelArg(Kb,4,sizeof(int),&n);
                     clEnqueueNDRangeKernel(Q,Kb,1,nullptr,&gs,nullptr,0,nullptr,nullptr);
                     clFinish(Q);
+                    //debug_read(Q,Bz,h,">>>backward4");
                 }
-                debug_read(Q,Bz,h,">>>backward");
+                
             }
 
             { // unweight and normalize
@@ -1057,48 +1119,48 @@ if (err != CL_SUCCESS) { }
                 clSetKernelArg(Ku,2,sizeof(int),&ln);
                 clEnqueueNDRangeKernel(Q,Ku,1,nullptr,&gs,nullptr,0,nullptr,nullptr);
                 clFinish(Q);
-                debug_read(Q,Bz,h,">>>unweight_norm");
+                //debug_read(Q,Bz,h,">>>unweight_norm");
             }
 
-                            {
+            {
                 size_t gs = 1;
                 clSetKernelArg(Kc, 0, sizeof(Bz),   &Bz);
-                //clSetKernelArg(Kc, 1, sizeof(Binv), &Binv);
                 clSetKernelArg(Kc, 1, sizeof(BdW),   &BdW);
                 clSetKernelArg(Kc, 2, sizeof(cl_uint), &h);
                 clEnqueueNDRangeKernel(Q, Kc, 1, nullptr, &gs, nullptr, 0, nullptr, nullptr);
                 clFinish(Q);  
-                debug_read(Q, Bz, h, ">>>carry");       // les valeurs doivent alors correspondre à la version CPU :contentReference[oaicite:1]{index=1}
-                //debug_read(Q,Bz,h,"carry");
+                //debug_read(Q, Bz, h, ">>>carry");
+                
             }
         }
-        // a : la valeur à soustraire
-        debug_read(Q, Bz, h, ">>>end"); 
+        std::cout << "Loop is done \n";
         
-        uint32_t a = 9;
-        clSetKernelArg(Ksub, 0, sizeof(cl_mem), &Bz);
-        clSetKernelArg(Ksub, 1, sizeof(cl_mem), &BdW);
-        clSetKernelArg(Ksub, 2, sizeof(cl_uint), &h);
-        clSetKernelArg(Ksub, 3, sizeof(cl_uint), &a);
-        clEnqueueNDRangeKernel(Q, Ksub, 1, nullptr, nullptr, nullptr, 0, nullptr, nullptr);
-        clFinish(Q);
+        //debug_read(Q, Bz, h, ">>>end"); 
+        std::vector<GF61_31> host_z(h);
+        cl_int err2 = clEnqueueReadBuffer(
+            Q,
+            Bz,
+            CL_TRUE,
+            0,
+            sizeof(GF61_31)*h,
+            host_z.data(),
+            0, nullptr, nullptr
+        );
+        if (err2 != CL_SUCCESS) {
+            std::cerr << "Erreur clEnqueueReadBuffer pour Bz : " << err2 << "\n";
+            std::exit(1);
+        }
 
-        int flag_zero = 1;
-        cl_mem Bfz = clCreateBuffer(C, CL_MEM_READ_WRITE|CL_MEM_COPY_HOST_PTR,
-                                    sizeof(flag_zero), &flag_zero, nullptr);
-
-        size_t gs1 = 1;
-        clSetKernelArg(Kisz, 0, sizeof(cl_mem), &Bz);
-        clSetKernelArg(Kisz, 1, sizeof(cl_uint), &h);
-        clSetKernelArg(Kisz, 2, sizeof(cl_mem), &Bfz);
-        clEnqueueNDRangeKernel(Q, Kisz, 1, nullptr, &gs1, nullptr, 0, nullptr, nullptr);
-        clFinish(Q);
-        clEnqueueReadBuffer(Q, Bfz, CL_TRUE, 0, sizeof(flag_zero), &flag_zero, 0, nullptr, nullptr);
-        // flag_zero vaut 1 si tout s0==0, 0 sinon
-
-        debug_read(Q, Bz, h, ">>>end after sub check"); 
-        
-        std::cout<<"p="<<p<<" flag="<<flag_zero<<"\n";
+        if (verify_equals(host_z, dw, 9)) {
+            std::cout << "2^" << p << " - 1" << " probably prime (residue is 9)\n";
+        }
+        else if (verify_is_Mp(host_z, dw)) {
+            std::cout << "2^" << p << " - 1" << " probably prime (residue is 9)\n";
+        }
+        else {
+            std::cout << "2^" << p << " - 1" <<  " is composite (residue is not 9)\n";
+        }
+        std::cout<<"p="<<p<<"\n";
         
 
         clReleaseMemObject(Bz);
