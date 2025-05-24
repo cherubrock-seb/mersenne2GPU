@@ -19,6 +19,9 @@
 #include <iostream>
 #include <vector>
 #include <cstdint>
+#include <iostream>
+#include <chrono>
+#include <iomanip>
 
 static const uint64_t Z61_p = (uint64_t(1) << 61) - 1;
 static const uint32_t Z31_p = (uint32_t(1) << 31) - 1;
@@ -1208,7 +1211,24 @@ if (err != CL_SUCCESS) { }
                     sizeof(dw[0]) * dw.size(),
                     dw.data(), nullptr);
         cl_mem Bf=clCreateBuffer(C,CL_MEM_READ_WRITE|CL_MEM_COPY_HOST_PTR,sizeof(flag),&flag,nullptr);
+        using Clock = std::chrono::steady_clock;
+        auto t0 = Clock::now();
+        const uint32_t start = 0;         
+        const uint32_t stop  = start_p; 
+        const uint32_t N     = 1000;        
+
         for (uint32_t iter = 0; iter < p; ++iter) {
+            if (iter % N == 0) {
+                auto now     = Clock::now();
+                double elapsed = std::chrono::duration<double>(now - t0).count();
+                double pct     = 100.0 * double(iter - start) / double(stop - start);
+                std::cout 
+                    << "iter " << iter 
+                    << "/" << stop 
+                    << " (" << std::fixed << std::setprecision(1) << pct << "%)"
+                    << ", elapsed " << std::setprecision(2) << elapsed << " s\n";
+                    clFinish(Q);
+            }
             { // weight
                 size_t gs=h;
                 clSetKernelArg(Kw,0,sizeof(Bz),&Bz);
@@ -1319,9 +1339,7 @@ if (err != CL_SUCCESS) { }
                 
             }
             
-            if(iter%800==0){
-                clFinish(Q);
-            }
+           
         }
 
         //std::cout << "Loop is done check result in progress\n";
