@@ -1343,9 +1343,9 @@ if (err != CL_SUCCESS) { }
         }
 
         //std::cout << "Loop is done check result in progress\n";
-        clFinish(Q);
+       
         std::cout << "Loop is done check result in progress\n";
-        
+        clFinish(Q);
         //debug_read(Q, Bz, h, ">>>end"); 
         std::vector<GF61_31> host_z(h);
         cl_int err2 = clEnqueueReadBuffer(
