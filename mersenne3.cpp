@@ -370,18 +370,18 @@ __kernel void weight(__global GF* z, __global const IW* w)
 {
    
     int i = get_global_id(0);
-     //printf("i=%d | w61=%u %u | w31=%u %u\n",i,w[2*i + 0].w61, w[2*i + 1].w61,w[2*i + 0].w31, w[2*i + 1].w31);
+     ////printf("i=%d | w61=%u %u | w31=%u %u\n",i,w[2*i + 0].w61, w[2*i + 1].w61,w[2*i + 0].w31, w[2*i + 1].w31);
        
     uint rs0 = w[2*i + 0].w61;
     uint rs1 = w[2*i + 1].w61;
     uint rt0 = w[2*i + 0].w31;
     uint rt1 = w[2*i + 1].w31;
-    //printf("i=%d | w61=%u %u | w31=%u %u | rs0=%u rs1=%u rt0=%u rt1=%u\n",i,w[2*i + 0].w61, w[2*i + 1].w61,w[2*i + 0].w31, w[2*i + 1].w31,rs0, rs1, rt0, rt1);
+    ////printf("i=%d | w61=%u %u | w31=%u %u | rs0=%u rs1=%u rt0=%u rt1=%u\n",i,w[2*i + 0].w61, w[2*i + 1].w61,w[2*i + 0].w31, w[2*i + 1].w31,rs0, rs1, rt0, rt1);
     GF zi = z[i];
-    //printf(" Before: s0=%llu s1=%llu | t0=%u t1=%u\n",zi.s0, zi.s1, zi.t0, zi.t1);
+    ////printf(" Before: s0=%llu s1=%llu | t0=%u t1=%u\n",zi.s0, zi.s1, zi.t0, zi.t1);
     z[i] = lshift_GF(zi, rs0, rs1, rt0, rt1);
     zi = z[i];
-    //printf(" After : s0=%llu s1=%llu | t0=%u t1=%u\n",zi.s0, zi.s1, zi.t0, zi.t1);
+    ////printf(" After : s0=%llu s1=%llu | t0=%u t1=%u\n",zi.s0, zi.s1, zi.t0, zi.t1);
 
 
 }
@@ -398,9 +398,9 @@ __kernel void forward4(__global GF* z,
     int i   = gid % m;
 
     if (gid == 0) {
-        ////printf("forward4 params: s=%d\n", s);
-        ////printf("forward4 params: m=%d\n", m);
-        ////printf("forward4 params: n=%d\n", n);
+        //////printf("forward4 params: s=%d\n", s);
+        //////printf("forward4 params: m=%d\n", m);
+        //////printf("forward4 params: n=%d\n", n);
     }
 
     if (j < s) {
@@ -411,31 +411,31 @@ __kernel void forward4(__global GF* z,
         GF u2 = gf_mul(z[b + 2 * m + i], w[s + j]);
         GF u3 = gf_mul(z[b + 3 * m + i], w[(n >> 1) + s + j]);
 
-        ////printf("gid=%d j=%d i=%d\n", gid, j, i);
+        //////printf("gid=%d j=%d i=%d\n", gid, j, i);
 
         /* u0 */
-        ////printf(" u0.s0=%u\n", (unsigned int)u0.s0);
-        ////printf(" u0.s1=%u\n", (unsigned int)u0.s1);
-        ////printf(" u0.t0=%u\n",           u0.t0);
-        ////printf(" u0.t1=%u\n",           u0.t1);
+        //////printf(" u0.s0=%u\n", (unsigned int)u0.s0);
+        //////printf(" u0.s1=%u\n", (unsigned int)u0.s1);
+        //////printf(" u0.t0=%u\n",           u0.t0);
+        //////printf(" u0.t1=%u\n",           u0.t1);
 
         /* u1 */
-        ////printf(" u1.s0=%u\n", (unsigned int)u1.s0);
-        ////printf(" u1.s1=%u\n", (unsigned int)u1.s1);
-        ////printf(" u1.t0=%u\n",           u1.t0);
-        ////printf(" u1.t1=%u\n",           u1.t1);
+        //////printf(" u1.s0=%u\n", (unsigned int)u1.s0);
+        //////printf(" u1.s1=%u\n", (unsigned int)u1.s1);
+        //////printf(" u1.t0=%u\n",           u1.t0);
+        //////printf(" u1.t1=%u\n",           u1.t1);
 
         /* u2 */
-        ////printf(" u2.s0=%u\n", (unsigned int)u2.s0);
-        ////printf(" u2.s1=%u\n", (unsigned int)u2.s1);
-        ////printf(" u2.t0=%u\n",           u2.t0);
-        ////printf(" u2.t1=%u\n",           u2.t1);
+        //////printf(" u2.s0=%u\n", (unsigned int)u2.s0);
+        //////printf(" u2.s1=%u\n", (unsigned int)u2.s1);
+        //////printf(" u2.t0=%u\n",           u2.t0);
+        //////printf(" u2.t1=%u\n",           u2.t1);
 
         /* u3 */
-        ////printf(" u3.s0=%u\n", (unsigned int)u3.s0);
-        ////printf(" u3.s1=%u\n", (unsigned int)u3.s1);
-        ////printf(" u3.t0=%u\n",           u3.t0);
-        ////printf(" u3.t1=%u\n",           u3.t1);
+        //////printf(" u3.s0=%u\n", (unsigned int)u3.s0);
+        //////printf(" u3.s1=%u\n", (unsigned int)u3.s1);
+        //////printf(" u3.t0=%u\n",           u3.t0);
+        //////printf(" u3.t1=%u\n",           u3.t1);
 
         /* Calcul des v’s */
         GF v0 = gf_add(u0, u2);
@@ -444,28 +444,28 @@ __kernel void forward4(__global GF* z,
         GF v3 = gf_sub(u1, u3);
 
         /* v0 */
-        ////printf(" v0.s0=%u\n", (unsigned int)v0.s0);
-        ////printf(" v0.s1=%u\n", (unsigned int)v0.s1);
-        ////printf(" v0.t0=%u\n",           v0.t0);
-        ////printf(" v0.t1=%u\n",           v0.t1);
+        //////printf(" v0.s0=%u\n", (unsigned int)v0.s0);
+        //////printf(" v0.s1=%u\n", (unsigned int)v0.s1);
+        //////printf(" v0.t0=%u\n",           v0.t0);
+        //////printf(" v0.t1=%u\n",           v0.t1);
 
         /* v1 */
-        ////printf(" v1.s0=%u\n", (unsigned int)v1.s0);
-        ////printf(" v1.s1=%u\n", (unsigned int)v1.s1);
-        ////printf(" v1.t0=%u\n",           v1.t0);
-        ////printf(" v1.t1=%u\n",           v1.t1);
+        //////printf(" v1.s0=%u\n", (unsigned int)v1.s0);
+        //////printf(" v1.s1=%u\n", (unsigned int)v1.s1);
+        //////printf(" v1.t0=%u\n",           v1.t0);
+        //////printf(" v1.t1=%u\n",           v1.t1);
 
         /* v2 */
-        ////printf(" v2.s0=%u\n", (unsigned int)v2.s0);
-        ////printf(" v2.s1=%u\n", (unsigned int)v2.s1);
-        ////printf(" v2.t0=%u\n",           v2.t0);
-        ////printf(" v2.t1=%u\n",           v2.t1);
+        //////printf(" v2.s0=%u\n", (unsigned int)v2.s0);
+        //////printf(" v2.s1=%u\n", (unsigned int)v2.s1);
+        //////printf(" v2.t0=%u\n",           v2.t0);
+        //////printf(" v2.t1=%u\n",           v2.t1);
 
         /* v3 */
-        ////printf(" v3.s0=%u\n", (unsigned int)v3.s0);
-        ////printf(" v3.s1=%u\n", (unsigned int)v3.s1);
-        ////printf(" v3.t0=%u\n",           v3.t0);
-        ////printf(" v3.t1=%u\n",           v3.t1);
+        //////printf(" v3.s0=%u\n", (unsigned int)v3.s0);
+        //////printf(" v3.s1=%u\n", (unsigned int)v3.s1);
+        //////printf(" v3.t0=%u\n",           v3.t0);
+        //////printf(" v3.t1=%u\n",           v3.t1);
 
         GF z0 = gf_add(v0, v1);
         GF z1 = gf_sub(v0, v1);
@@ -473,31 +473,31 @@ __kernel void forward4(__global GF* z,
         GF z3 = gf_subi(v2, v3);
 
         /* write z0 */
-        ////printf(" write z[%d].s0=%u\n", b + i,    (unsigned int)z0.s0);
-        ////printf(" write z[%d].s1=%u\n", b + i,    (unsigned int)z0.s1);
-        ////printf(" write z[%d].t0=%u\n", b + i,               z0.t0);
-        ////printf(" write z[%d].t1=%u\n", b + i,               z0.t1);
+        //////printf(" write z[%d].s0=%u\n", b + i,    (unsigned int)z0.s0);
+        //////printf(" write z[%d].s1=%u\n", b + i,    (unsigned int)z0.s1);
+        //////printf(" write z[%d].t0=%u\n", b + i,               z0.t0);
+        //////printf(" write z[%d].t1=%u\n", b + i,               z0.t1);
         z[b + i] = z0;
 
         /* write z1 */
-        ////printf(" write z[%d].s0=%u\n", b + m + i, (unsigned int)z1.s0);
-        ////printf(" write z[%d].s1=%u\n", b + m + i, (unsigned int)z1.s1);
-        ////printf(" write z[%d].t0=%u\n", b + m + i,           z1.t0);
-        ////printf(" write z[%d].t1=%u\n", b + m + i,           z1.t1);
+        //////printf(" write z[%d].s0=%u\n", b + m + i, (unsigned int)z1.s0);
+        //////printf(" write z[%d].s1=%u\n", b + m + i, (unsigned int)z1.s1);
+        //////printf(" write z[%d].t0=%u\n", b + m + i,           z1.t0);
+        //////printf(" write z[%d].t1=%u\n", b + m + i,           z1.t1);
         z[b + m + i] = z1;
 
         /* write z2 */
-        ////printf(" write z[%d].s0=%u\n", b + 2*m + i, (unsigned int)z2.s0);
-        ////printf(" write z[%d].s1=%u\n", b + 2*m + i, (unsigned int)z2.s1);
-        ////printf(" write z[%d].t0=%u\n", b + 2*m + i,           z2.t0);
-        ////printf(" write z[%d].t1=%u\n", b + 2*m + i,           z2.t1);
+        //////printf(" write z[%d].s0=%u\n", b + 2*m + i, (unsigned int)z2.s0);
+        //////printf(" write z[%d].s1=%u\n", b + 2*m + i, (unsigned int)z2.s1);
+        //////printf(" write z[%d].t0=%u\n", b + 2*m + i,           z2.t0);
+        //////printf(" write z[%d].t1=%u\n", b + 2*m + i,           z2.t1);
         z[b + 2*m + i] = z2;
 
         /* write z3 */
-        ////printf(" write z[%d].s0=%u\n", b + 3*m + i, (unsigned int)z3.s0);
-        ////printf(" write z[%d].s1=%u\n", b + 3*m + i, (unsigned int)z3.s1);
-        ////printf(" write z[%d].t0=%u\n", b + 3*m + i,           z3.t0);
-        ////printf(" write z[%d].t1=%u\n", b + 3*m + i,           z3.t1);
+        //////printf(" write z[%d].s0=%u\n", b + 3*m + i, (unsigned int)z3.s0);
+        //////printf(" write z[%d].s1=%u\n", b + 3*m + i, (unsigned int)z3.s1);
+        //////printf(" write z[%d].t0=%u\n", b + 3*m + i,           z3.t0);
+        //////printf(" write z[%d].t1=%u\n", b + 3*m + i,           z3.t1);
         z[b + 3*m + i] = z3;
     }
 }
@@ -663,56 +663,132 @@ __kernel void backward4(__global GF* z,
 __kernel void unweight_norm(__global GF* z, __global const IW* w, int ln)
 {
     int i = get_global_id(0);
-     ////printf("i=%d | w61=%u %u | w31=%u %u\n",i,       w[2*i + 0].w61, w[2*i + 1].w61, w[2*i + 0].w31, w[2*i + 1].w31);
+     //////printf("i=%d | w61=%u %u | w31=%u %u\n",i,       w[2*i + 0].w61, w[2*i + 1].w61, w[2*i + 0].w31, w[2*i + 1].w31);
     uint ln2 = ln + 2;
     uint rs0 = w[2*i + 0].w61 + ln2;
     uint rs1 = w[2*i + 1].w61 + ln2;
     uint rt0 = w[2*i + 0].w31 + ln2;
     uint rt1 = w[2*i + 1].w31 + ln2;
-    ////printf("i=%d | ln=%d | w61=%u %u | w31=%u %u | rs0=%u rs1=%u rt0=%u rt1=%u\n",i, ln,    w[2*i + 0].w61, w[2*i + 1].w61,    w[2*i + 0].w31, w[2*i + 1].w31,rs0, rs1, rt0, rt1);
+    //////printf("i=%d | ln=%d | w61=%u %u | w31=%u %u | rs0=%u rs1=%u rt0=%u rt1=%u\n",i, ln,    w[2*i + 0].w61, w[2*i + 1].w61,    w[2*i + 0].w31, w[2*i + 1].w31,rs0, rs1, rt0, rt1);
     GF zi = z[i];
-    ////printf(" Before: s0=%llu s1=%llu | t0=%u t1=%u\n",zi.s0, zi.s1, zi.t0, zi.t1);
+    //////printf(" Before: s0=%llu s1=%llu | t0=%u t1=%u\n",zi.s0, zi.s1, zi.t0, zi.t1);
     z[i] = rshift_GF(zi, rs0, rs1, rt0, rt1);
     zi = z[i];
-    ////printf(" After : s0=%llu s1=%llu | t0=%u t1=%u\n",zi.s0, zi.s1, zi.t0, zi.t1);
+    //////printf(" After : s0=%llu s1=%llu | t0=%u t1=%u\n",zi.s0, zi.s1, zi.t0, zi.t1);
 }
 
 
-inline ulong digit_adc(u128 lhs, uint w, __private u128 *carry){
-    u128 s = add_u128(lhs, *carry);
-    ulong mask = ((ulong)1 << w) - 1;
-    ulong res  = s.lo & mask;
-    *carry     = rshift_u128(s, w);
-    return res;
+inline u128 make_u128_2(ulong lo, ulong hi){ return (u128){ lo, hi }; }
+inline u128 add_u128_2(u128 a, u128 b){
+    ulong lo = a.lo + b.lo;
+    ulong carry = (lo < a.lo);
+    return (u128){ lo, a.hi + b.hi + carry };
+}
+inline u128 shl_u128_2(u128 a, uint w){
+    if (w == 0) return a;
+    if (w < 64) {
+        return (u128){
+            .lo = a.lo << w,
+            .hi = (a.hi << w) | (a.lo >> (64 - w))
+        };
+    } else {
+        return (u128){
+            .lo = 0UL,
+            .hi = a.lo << (w - 64)
+        };
+    }
+}
+inline u128 rshift_u128_2(u128 a, uint w){
+    if (w == 0) return a;
+    if (w < 64) {
+        return (u128){
+            .lo = (a.lo >> w) | (a.hi << (64 - w)),
+            .hi = a.hi >> w
+        };
+    } else {
+        return (u128){
+            .lo = a.hi >> (w - 64),
+            .hi = 0UL
+        };
+    }
 }
 
-inline void garner_GF(const GF x, __private u128 *l0, __private u128 *l1){
+inline ulong digit_adc(u128 lhs, uint digit_width, __private u128 *carry) {
+
+    u128 s = add_u128_2(lhs, *carry);
+
+    bool overflow = (s.hi < lhs.hi) ||
+                    (s.hi == lhs.hi && s.lo < lhs.lo);
+    u128 c128 = overflow ? make_u128_2(1UL, 0UL)
+                         : make_u128_2(0UL, 0UL);
+
+    u128 shifted = rshift_u128_2(s, digit_width);
+
+    u128 c_shifted = shl_u128_2(c128, 128U - digit_width);
+
+    *carry = add_u128_2(shifted, c_shifted);
+
+    ulong mask = ((ulong)1 << digit_width) - 1UL;
+    return s.lo & mask;
+}
+inline void garner_GF(const GF x,
+                      __private u128 *l0,
+                      __private u128 *l1)
+{
+
     u32 n31_0 = x.t0, n31_1 = x.t1;
-    u64 u0 = sub61(x.s0, n31_0), u1 = sub61(x.s1, n31_1);
-    
-    u64 lo0 = (u0 << 31) & P61, hi0 = u0 >> (61-31);
-    u64 lo1 = (u1 << 31) & P61, hi1 = u1 >> (61-31);
+    u64 u0 = sub61(x.s0, n31_0),
+        u1 = sub61(x.s1, n31_1);
 
+    u64 lo0 = (u0 << 31) & P61,  hi0 = u0 >> (61 - 31);
+    u64 lo1 = (u1 << 31) & P61,  hi1 = u1 >> (61 - 31);
     u0 = add61(u0, add61(lo0, hi0));
     u1 = add61(u1, add61(lo1, hi1));
 
-    *l0 = make_u128((ulong)n31_0 + ((ulong)u0 << 31) - u0, 0);
-    *l1 = make_u128((ulong)n31_1 + ((ulong)u1 << 31) - u1, 0);
+    u128 full0 = make_u128_2((ulong)n31_0, 0UL);
+    u128 t0 = make_u128_2((ulong)u0, 0UL);
+    t0 = shl_u128_2(t0, 31);
+    full0 = add_u128_2(full0, t0);
+    {
+      ulong lo_neg0 = 0UL - u0;
+      ulong hi_neg0 = u0 ? ~0UL : 0UL;
+      u128 neg0 = make_u128_2(lo_neg0, hi_neg0);
+      full0 = add_u128_2(full0, neg0);
+    }
+    *l0 = full0;
+
+    u128 full1 = make_u128_2((ulong)n31_1, 0UL);
+    u128 t1 = make_u128_2((ulong)u1, 0UL);
+    t1 = shl_u128_2(t1, 31);
+    full1 = add_u128_2(full1, t1);
+    {
+      ulong lo_neg1 = 0UL - u1;
+      ulong hi_neg1 = u1 ? ~0UL : 0UL;
+      u128 neg1 = make_u128_2(lo_neg1, hi_neg1);
+      full1 = add_u128_2(full1, neg1);
+    }
+    *l1 = full1;
 }
+
+
 
 
 __kernel void carry_end(__global GF* z,
                            __global const uint* digit_width,
                            const uint n2)
 {
-    __private u128 c = make_u128(1, 0);
+    __private u128 c = make_u128(10, 0);
     for (uint k = 0; k < n2; ++k) {
         u128 L0, L1;
-        garner_GF(z[k], &L0, &L1);
 
+        GF zi = z[k]; 
+        //printf(" Before garner: s0=%lu s1=%lu | t0=%u t1=%u\n",zi.s0, zi.s1, zi.t0, zi.t1);
+        garner_GF(z[k], &L0, &L1);
+        zi = z[k]; 
+        //printf(" Before garner: s0=%lu s1=%lu | t0=%u t1=%u\n",zi.s0, zi.s1, zi.t0, zi.t1);
         uint w0 = digit_width[2*k];
         uint w1 = digit_width[2*k + 1];
-
+        
         ulong n0 = digit_adc(L0, w0, &c);
         ulong n1 = digit_adc(L1, w1, &c);
 
@@ -722,7 +798,7 @@ __kernel void carry_end(__global GF* z,
         if ((c.lo | c.hi) == 0) break;
     }
 
-    uint borrow = 1;
+    uint borrow = 10;
     for (uint k = 0; k < n2; ++k) {
         uint w0 = digit_width[2*k];
         uint w1 = digit_width[2*k + 1];
@@ -748,24 +824,37 @@ __kernel void carry_end(__global GF* z,
     }
 }
 
+__constant uint _p31 = ((uint)1 << 31) - 1;
+__constant ulong _p61 = ((uint)1 << 61) - 1;
+
 
 __kernel void carry(__global GF* z,
                     __global const uint* digit_width,
                     const uint n2)
 {
     __private u128 c = make_u128(0, 0);
-   //printf("Carry start\n");
+   ////printf("Carry start\n");
 
     for (uint k = 0; k < n2; ++k) {
         u128 L0, L1;
+        GF zi = z[k]; 
+        //printf(" Before garner: s0=%lu s1=%lu | t0=%u t1=%u\n",zi.s0, zi.s1, zi.t0, zi.t1);
         garner_GF(z[k], &L0, &L1);
+        zi = z[k]; 
+        //printf(" After garner: s0=%lu s1=%lu | t0=%u t1=%u\n",zi.s0, zi.s1, zi.t0, zi.t1);
+        //printf(" After garner: s0=%lu s1=%lu | t0=%u t1=%u\n",zi.s0, zi.s1, zi.t0, zi.t1);
+        //printf("k=%u | L0=(%lu,%lu) L1=(%lu,%lu)\n",k, L0.lo, L0.hi, L1.lo, L1.hi);
+    
         uint w0 = digit_width[2 * k], w1 = digit_width[2 * k + 1];
         ulong n0 = digit_adc(L0, w0, &c);
         ulong n1 = digit_adc(L1, w1, &c);
-        z[k].s0 = n0; z[k].s1 = n1;
-        z[k].t0 = (uint)n0; z[k].t1 = (uint)n1;
-
-        //printf("k=%u | L0=(%llu,%llu) L1=(%llu,%llu) | w0=%u w1=%u | n0=%lu n1=%lu | c=(%llu,%llu)\n",k, L0.lo, L0.hi, L1.lo, L1.hi, w0, w1, n0, n1, c.lo, c.hi);
+        z[k].s0 = (n0); 
+        z[k].s1 = (n1);
+        z[k].t0 = (uint)(n0 % _p31);
+        z[k].t1 = (uint)(n1 % _p31);
+        //printf("k=%u | L0=(%lu,%lu) L1=(%lu,%lu) | w0=%u w1=%u | n0=%lu n1=%lu | c=(%lu,%lu)\n",k, L0.lo, L0.hi, L1.lo, L1.hi, w0, w1, z[k].t0 , z[k].t1, c.lo, c.hi);
+        //printf("k=%u | n0=%lu n1=%lu ",k,n0,n1);
+        
     }
 
     while ((c.lo | c.hi) != 0) {
@@ -777,8 +866,10 @@ __kernel void carry(__global GF* z,
             uint w0 = digit_width[2 * k], w1 = digit_width[2 * k + 1];
             ulong n0 = digit_adc(L0, w0, &c);
             ulong n1 = digit_adc(L1, w1, &c);
-            z[k].s0 = n0; z[k].s1 = n1;
-            z[k].t0 = (uint)n0; z[k].t1 = (uint)n1;
+            z[k].s0 = (n0); z[k].s1 = (n1);
+
+            z[k].t0 = (uint)(n0 % _p31);
+            z[k].t1 = (uint)(n1 % _p31);
 
             //printf("k=%u | R0=%lu R1=%lu | w0=%u w1=%u | c=(%llu,%llu)\n",k, n0, n1, w0, w1, c.lo, c.hi);
 
@@ -789,21 +880,18 @@ __kernel void carry(__global GF* z,
         }
     }
 
-    ////printf("Carry end\n");
+    //printf("Carry end\n");
 }
+
 // Subtraction with borrow across a w-bit digit
 inline ulong digit_sbc(ulong lhs, uint w, __private uint *borrow) {
     uint b = *borrow;
     ulong mask = ((ulong)1 << w) - 1ul;
-    // soustraction de l’ancien borrow
     ulong t = lhs - (ulong)b;
-    // nouveau borrow si underflow
     *borrow = (lhs < (ulong)b) ? 1u : 0u;
-    // on ne garde que les w bits de poids faible
     return t & mask;
 }
 
-// sub_kernel : soustrait `a` à tout z[0..n2-1], en propageant borrow
 __kernel void sub_kernel(__global GF*        z,
                          __global const uint* digit_width,
                          const uint           n2,
@@ -812,13 +900,10 @@ __kernel void sub_kernel(__global GF*        z,
     uint borrow = a;
     while (borrow != 0u) {
         for (uint k = 0; k < n2; ++k) {
-            // récupère les deux parties 61-bits
             ulong s0 = z[k].s0;
             ulong s1 = z[k].s1;
-            // soustractions digitaires
             ulong n0 = digit_sbc(s0, digit_width[2*k],   &borrow);
             ulong n1 = digit_sbc(s1, digit_width[2*k+1], &borrow);
-            // mise à jour
             z[k].s0 = n0;
             z[k].s1 = n1;
             z[k].t0 = (uint)n0;
@@ -828,7 +913,6 @@ __kernel void sub_kernel(__global GF*        z,
     }
 }
 
-// is_zero_kernel : vérifie que tous les s0 sont 0
 __kernel void is_zero_kernel(__global const GF* z,
                              const uint          n2,
                              __global int*       flag_zero)
@@ -841,7 +925,6 @@ __kernel void is_zero_kernel(__global const GF* z,
     }
 }
 
-// is_Mp_kernel : vérifie que chaque (s0,s1)==(2^w0−1, 2^w1−1)
 __kernel void is_Mp_kernel(__global const GF*   z,
                            __global const uint* digit_width,
                            const uint           n2,
@@ -1025,7 +1108,8 @@ int main(int argc, char* argv[]){
         }
 
         size_t h = size_t{1} << (ln - 1);  
-        size_t n = h << 1;                 
+        size_t n = h << 1;   
+                      
         std::cout << "ln = " << ln 
                 << ", h = " << h 
                 << " (power of 4), n = " << n 
@@ -1034,7 +1118,7 @@ int main(int argc, char* argv[]){
 
         
 
-        std::cout << "TRANSFORM SIZE = " << n <<std::endl;
+        std::cout << "TRANSFORM SIZE = " << h <<std::endl;
 
         std::vector<GF61_31> z(h), wv(5*h/2);
         std::vector<IBWeight> iw_fwd(n), iw_inv(n);
@@ -1066,11 +1150,11 @@ int main(int argc, char* argv[]){
             o                 = ceil_qj;
         }
 
-        //printf("digit_width = { ");
+        ////printf("digit_width = { ");
         for (size_t j = 0; j < n; ++j) {
-            //printf("%u ", dw[j]); 
+            ////printf("%u ", dw[j]); 
         }
-        //printf("}\n");
+        ////printf("}\n");
 
         //dw[n-1] = 0;
 
@@ -1234,20 +1318,12 @@ if (err != CL_SUCCESS) { }
                 //debug_read(Q, Bz, h, ">>>carry");
                 
             }
+            
             if(iter%800==0){
                 clFinish(Q);
             }
         }
-       {
-                size_t gs = 1;
-                clSetKernelArg(Kce, 0, sizeof(Bz),   &Bz);
-                clSetKernelArg(Kce, 1, sizeof(BdW),   &BdW);
-                clSetKernelArg(Kce, 2, sizeof(cl_uint), &h);
-                clEnqueueNDRangeKernel(Q, Kce, 1, nullptr, &gs, nullptr, 0, nullptr, nullptr);
-                //clFinish(Q);  
-                //debug_read(Q, Bz, h, ">>>carry");
-                
-        }
+
         //std::cout << "Loop is done check result in progress\n";
         clFinish(Q);
         std::cout << "Loop is done check result in progress\n";
