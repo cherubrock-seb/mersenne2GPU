@@ -66,6 +66,9 @@ Example:
 - p in 9437189-18874367 uses N = 524288
 - p in 18874379-36700159 uses N = 1048576
 
+## Transform ranges
+
+```text
 Prime exponent p range   N            Structure
 ----------------------------------------------------
 3-173                    4            2^2
