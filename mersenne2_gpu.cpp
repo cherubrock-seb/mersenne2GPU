@@ -291,6 +291,8 @@ typedef struct { uchar w61, w31; } IW;
 #define P61 (((u64)1<<61)-1)
 #define P31 (((u32)1<<31)-1)
 
+inline u64 pack_u32x2_dev(const u32 lo, const u32 hi) { return ((u64)lo) | (((u64)hi) << 32); }
+
 inline u128 make_u128(ulong lo, ulong hi){ u128 r = { lo, hi }; return r; }
 inline u128 add_u128(u128 a, u128 b){ ulong lo = a.lo + b.lo; ulong carry = (lo < a.lo); return make_u128(lo, a.hi + b.hi + carry); }
 inline u128 shl_u128(u128 a, uint w){
@@ -1979,34 +1981,77 @@ inline uint apply_carry_to_pair_direct_mask(__global GF* restrict z,
     return (carry->lo | carry->hi) == 0ul;
 }
 
+inline void normalize_pair_from_garner_direct_mask_raw(__global ulong* restrict zraw,
+                                                       const uint k,
+                                                       __private u128 *carry,
+                                                       const uint narrow_w,
+                                                       const ulong mask_narrow,
+                                                       const ulong mask_wide,
+                                                       const uint small31,
+                                                       const uint pair_mask) {
+    const uint base = 3u * k;
+    const ulong s0 = zraw[base + 0u];
+    const ulong s1 = zraw[base + 1u];
+    const ulong p  = zraw[base + 2u];
+    const u32 t0 = (u32)p, t1 = (u32)(p >> 32);
+    GF zk = { s0, s1, t0, t1 };
+    u128 L0, L1;
+    garner_GF(zk, &L0, &L1);
+    ulong n0 = digit_adc_two_width(L0, narrow_w, mask_narrow, mask_wide, carry, pair_mask & 1u);
+    ulong n1 = digit_adc_two_width(L1, narrow_w, mask_narrow, mask_wide, carry, (pair_mask >> 1) & 1u);
+    zraw[base + 0u] = n0;
+    zraw[base + 1u] = n1;
+    zraw[base + 2u] = (small31 != 0u) ? pack_u32x2_dev((u32)n0, (u32)n1) : pack_u32x2_dev(mod31_u64(n0), mod31_u64(n1));
+}
+
+inline uint apply_carry_to_pair_direct_mask_raw(__global ulong* restrict zraw,
+                                                const uint k,
+                                                __private u128 *carry,
+                                                const uint narrow_w,
+                                                const ulong mask_narrow,
+                                                const ulong mask_wide,
+                                                const uint small31,
+                                                const uint pair_mask) {
+    const uint base = 3u * k;
+    const ulong s0 = zraw[base + 0u];
+    const ulong s1 = zraw[base + 1u];
+    ulong n0 = digit_adc_two_width(make_u128(s0, 0ul), narrow_w, mask_narrow, mask_wide, carry, pair_mask & 1u);
+    ulong n1 = digit_adc_two_width(make_u128(s1, 0ul), narrow_w, mask_narrow, mask_wide, carry, (pair_mask >> 1) & 1u);
+    zraw[base + 0u] = n0;
+    zraw[base + 1u] = n1;
+    zraw[base + 2u] = (small31 != 0u) ? pack_u32x2_dev((u32)n0, (u32)n1) : pack_u32x2_dev(mod31_u64(n0), mod31_u64(n1));
+    return (carry->lo | carry->hi) == 0ul;
+}
+
 __kernel void block_prepare_direct8_mask_kernel(__global GF* restrict z,
-                                                __global const uint* restrict block_wide_mask,
+                                                __global const ushort* restrict block_wide_mask,
                                                 __global CarryWord* restrict carry_next,
                                                 const uint nblocks,
                                                 const uint narrow_w,
                                                 const uint small31) {
     uint b = get_global_id(0);
     if (b >= nblocks) return;
+    __global ulong* restrict zraw = (__global ulong*)z;
     const ulong mask_narrow = ((ulong)1 << narrow_w) - 1ul;
     const ulong mask_wide = (mask_narrow << 1) | 1ul;
     const uint k = b << 3;
-    const uint bm = block_wide_mask[b];
+    const uint bm = (uint)block_wide_mask[b];
     u128 c = make_u128(0ul, 0ul);
-    normalize_pair_from_garner_direct_mask(z, k + 0u, &c, narrow_w, mask_narrow, mask_wide, small31, (bm >> 0) & 3u);
-    normalize_pair_from_garner_direct_mask(z, k + 1u, &c, narrow_w, mask_narrow, mask_wide, small31, (bm >> 2) & 3u);
-    normalize_pair_from_garner_direct_mask(z, k + 2u, &c, narrow_w, mask_narrow, mask_wide, small31, (bm >> 4) & 3u);
-    normalize_pair_from_garner_direct_mask(z, k + 3u, &c, narrow_w, mask_narrow, mask_wide, small31, (bm >> 6) & 3u);
-    normalize_pair_from_garner_direct_mask(z, k + 4u, &c, narrow_w, mask_narrow, mask_wide, small31, (bm >> 8) & 3u);
-    normalize_pair_from_garner_direct_mask(z, k + 5u, &c, narrow_w, mask_narrow, mask_wide, small31, (bm >> 10) & 3u);
-    normalize_pair_from_garner_direct_mask(z, k + 6u, &c, narrow_w, mask_narrow, mask_wide, small31, (bm >> 12) & 3u);
-    normalize_pair_from_garner_direct_mask(z, k + 7u, &c, narrow_w, mask_narrow, mask_wide, small31, (bm >> 14) & 3u);
+    normalize_pair_from_garner_direct_mask_raw(zraw, k + 0u, &c, narrow_w, mask_narrow, mask_wide, small31, (bm >> 0) & 3u);
+    normalize_pair_from_garner_direct_mask_raw(zraw, k + 1u, &c, narrow_w, mask_narrow, mask_wide, small31, (bm >> 2) & 3u);
+    normalize_pair_from_garner_direct_mask_raw(zraw, k + 2u, &c, narrow_w, mask_narrow, mask_wide, small31, (bm >> 4) & 3u);
+    normalize_pair_from_garner_direct_mask_raw(zraw, k + 3u, &c, narrow_w, mask_narrow, mask_wide, small31, (bm >> 6) & 3u);
+    normalize_pair_from_garner_direct_mask_raw(zraw, k + 4u, &c, narrow_w, mask_narrow, mask_wide, small31, (bm >> 8) & 3u);
+    normalize_pair_from_garner_direct_mask_raw(zraw, k + 5u, &c, narrow_w, mask_narrow, mask_wide, small31, (bm >> 10) & 3u);
+    normalize_pair_from_garner_direct_mask_raw(zraw, k + 6u, &c, narrow_w, mask_narrow, mask_wide, small31, (bm >> 12) & 3u);
+    normalize_pair_from_garner_direct_mask_raw(zraw, k + 7u, &c, narrow_w, mask_narrow, mask_wide, small31, (bm >> 14) & 3u);
     uint dst = (b + 1u < nblocks) ? (b + 1u) : 0u;
     carry_next[dst].lo = c.lo;
     carry_next[dst].hi = c.hi;
 }
 
 __kernel void block_apply_carry_direct8_mask_kernel(__global GF* restrict z,
-                                                    __global const uint* restrict block_wide_mask,
+                                                    __global const ushort* restrict block_wide_mask,
                                                     __global const CarryWord* restrict carry_in,
                                                     const uint nblocks,
                                                     const uint narrow_w,
@@ -2015,18 +2060,19 @@ __kernel void block_apply_carry_direct8_mask_kernel(__global GF* restrict z,
     if (b >= nblocks) return;
     u128 c = make_u128(carry_in[b].lo, carry_in[b].hi);
     if ((c.lo | c.hi) == 0ul) return;
+    __global ulong* restrict zraw = (__global ulong*)z;
     const ulong mask_narrow = ((ulong)1 << narrow_w) - 1ul;
     const ulong mask_wide = (mask_narrow << 1) | 1ul;
     const uint k = b << 3;
-    const uint bm = block_wide_mask[b];
-    if (apply_carry_to_pair_direct_mask(z, k + 0u, &c, narrow_w, mask_narrow, mask_wide, small31, (bm >> 0) & 3u) != 0u) return;
-    if (apply_carry_to_pair_direct_mask(z, k + 1u, &c, narrow_w, mask_narrow, mask_wide, small31, (bm >> 2) & 3u) != 0u) return;
-    if (apply_carry_to_pair_direct_mask(z, k + 2u, &c, narrow_w, mask_narrow, mask_wide, small31, (bm >> 4) & 3u) != 0u) return;
-    if (apply_carry_to_pair_direct_mask(z, k + 3u, &c, narrow_w, mask_narrow, mask_wide, small31, (bm >> 6) & 3u) != 0u) return;
-    if (apply_carry_to_pair_direct_mask(z, k + 4u, &c, narrow_w, mask_narrow, mask_wide, small31, (bm >> 8) & 3u) != 0u) return;
-    if (apply_carry_to_pair_direct_mask(z, k + 5u, &c, narrow_w, mask_narrow, mask_wide, small31, (bm >> 10) & 3u) != 0u) return;
-    if (apply_carry_to_pair_direct_mask(z, k + 6u, &c, narrow_w, mask_narrow, mask_wide, small31, (bm >> 12) & 3u) != 0u) return;
-    if (apply_carry_to_pair_direct_mask(z, k + 7u, &c, narrow_w, mask_narrow, mask_wide, small31, (bm >> 14) & 3u) != 0u) return;
+    const uint bm = (uint)block_wide_mask[b];
+    if (apply_carry_to_pair_direct_mask_raw(zraw, k + 0u, &c, narrow_w, mask_narrow, mask_wide, small31, (bm >> 0) & 3u) != 0u) return;
+    if (apply_carry_to_pair_direct_mask_raw(zraw, k + 1u, &c, narrow_w, mask_narrow, mask_wide, small31, (bm >> 2) & 3u) != 0u) return;
+    if (apply_carry_to_pair_direct_mask_raw(zraw, k + 2u, &c, narrow_w, mask_narrow, mask_wide, small31, (bm >> 4) & 3u) != 0u) return;
+    if (apply_carry_to_pair_direct_mask_raw(zraw, k + 3u, &c, narrow_w, mask_narrow, mask_wide, small31, (bm >> 6) & 3u) != 0u) return;
+    if (apply_carry_to_pair_direct_mask_raw(zraw, k + 4u, &c, narrow_w, mask_narrow, mask_wide, small31, (bm >> 8) & 3u) != 0u) return;
+    if (apply_carry_to_pair_direct_mask_raw(zraw, k + 5u, &c, narrow_w, mask_narrow, mask_wide, small31, (bm >> 10) & 3u) != 0u) return;
+    if (apply_carry_to_pair_direct_mask_raw(zraw, k + 6u, &c, narrow_w, mask_narrow, mask_wide, small31, (bm >> 12) & 3u) != 0u) return;
+    if (apply_carry_to_pair_direct_mask_raw(zraw, k + 7u, &c, narrow_w, mask_narrow, mask_wide, small31, (bm >> 14) & 3u) != 0u) return;
 }
 
 __kernel void block_apply_prev_carry_kernel(__global GF* restrict z,
@@ -2592,11 +2638,11 @@ int main(int argc, char* argv[]) {
         if (bi.bits <= 128u) { can_use_direct_block_carry = false; break; }
     }
     const bool can_use_direct8_mask = can_use_direct_block_carry && target_pairs_per_block == 8u && (h_u32 % 8u) == 0u;
-    std::vector<uint32_t> block_wide_mask;
+    std::vector<uint16_t> block_wide_mask;
     if (can_use_direct8_mask) {
         block_wide_mask.resize(nblocks_u32);
         for (uint32_t b = 0; b < nblocks_u32; ++b) {
-            uint32_t m = 0u;
+            uint16_t m = 0u;
             const uint32_t start = b * 8u;
             for (uint32_t t = 0; t < 8u; ++t) {
                 if (digit_width[2ull * (start + t)] != q_n) m |= (1u << (2u * t));
