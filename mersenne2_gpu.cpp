@@ -3090,9 +3090,15 @@ static AutoTuneChoice choose_auto_tune(uint32_t h_u32, size_t max_wg, cl_ulong l
         else r.carry_pairs = std::min<uint32_t>(256u, std::max<uint32_t>(1u, h_u32));
     } else if (is_nvidia) {
         r.profile = "nvidia-warp32-splitwg";
-        // On NVIDIA, FFT kernels often prefer 128 threads while the carry fast path
-        // benefits from smaller 64-thread groups and fine carry blocks.
-        r.wg = (max_wg >= 128u) ? 128u : (max_wg >= 64u ? 64u : 32u);
+        // Empirical default tuned from Tesla T4-style results:
+        // for medium transforms around 2^18 words, FFT is faster at 64 than 128,
+        // while carry still prefers 64-thread groups and fine carry blocks.
+        // Keep larger jobs on 128 by default unless the device looks like a smaller
+        // 48KB-local-memory NVIDIA part where 64 remains a safer starting point.
+        const bool nvidia_small_local = (local_mem_size <= 49152u);
+        if (h_u32 <= (1u << 18)) r.wg = (max_wg >= 64u) ? 64u : (max_wg >= 32u ? 32u : 16u);
+        else if (h_u32 <= (1u << 19) && nvidia_small_local) r.wg = (max_wg >= 64u) ? 64u : (max_wg >= 32u ? 32u : 16u);
+        else r.wg = (max_wg >= 128u) ? 128u : (max_wg >= 64u ? 64u : 32u);
         r.carry_wg = (max_wg >= 64u) ? 64u : (max_wg >= 32u ? 32u : 16u);
         if (h_u32 >= (1u << 20)) r.carry_pairs = 8u;
         else if (h_u32 >= (1u << 18)) r.carry_pairs = 8u;
