@@ -54,7 +54,6 @@
 #include <cmath>
 #include <cstdlib>
 #include <cstring>
-#include <deque>
 #include <iomanip>
 #include <iostream>
 #include <limits>
@@ -3126,7 +3125,7 @@ int main(int argc, char* argv[]) {
     uint32_t device_index = 0u;
     uint32_t wg_override = 0u;
     uint32_t carry_pairs_override = 0u;
-    bool report_set = false;
+    bool report_every_set = false;
 
     for (int i = 2; i < argc; ++i) {
         const std::string arg = argv[i];
@@ -3156,9 +3155,9 @@ int main(int argc, char* argv[]) {
                 return 1;
             }
             carry_pairs_override = static_cast<uint32_t>(std::strtoul(argv[++i], nullptr, 10));
-        } else if (!report_set) {
+        } else if (!report_every_set) {
             report_every = static_cast<uint32_t>(std::strtoul(arg.c_str(), nullptr, 10));
-            report_set = true;
+            report_every_set = true;
         } else {
             std::cerr << "Unknown argument: " << arg << "\n";
             std::cerr << "Usage: " << argv[0] << " <p> [ll|prp] [report_every] [-d device_id] [-R report_seconds] [-W wg] [-B carry_pairs]\n";
@@ -3215,6 +3214,18 @@ int main(int argc, char* argv[]) {
     const std::string dev_name_lower = lower_ascii(dev_name_str);
     const bool is_gfx9 = (dev_name_lower.find("gfx9") != std::string::npos || dev_name_lower.find("gfx90") != std::string::npos || dev_name_lower.find("gfx906") != std::string::npos || dev_name_lower.find("vega") != std::string::npos || dev_name_lower.find("radeon vii") != std::string::npos);
     const AutoTuneChoice auto_tune = choose_auto_tune(static_cast<uint32_t>(h), max_wg, local_mem_size, compute_units, dev_name_str, vendor_name_str);
+    const bool is_nvidia_dev = (lower_ascii(vendor_name_str).find("nvidia") != std::string::npos || dev_name_lower.find("tesla") != std::string::npos || dev_name_lower.find("rtx") != std::string::npos || dev_name_lower.find("gtx") != std::string::npos);
+    const bool is_amd_dev = (lower_ascii(vendor_name_str).find("amd") != std::string::npos || lower_ascii(vendor_name_str).find("advanced micro devices") != std::string::npos || dev_name_lower.find("gfx") != std::string::npos || dev_name_lower.find("radeon") != std::string::npos);
+    if (!report_every_set) {
+        if (is_nvidia_dev) {
+            if (h >= (1u << 20)) report_every = 4000u;
+            else if (h >= (1u << 18)) report_every = 2000u;
+            else report_every = 1000u;
+        } else if (is_amd_dev) {
+            if (h >= (1u << 20)) report_every = 2000u;
+            else report_every = 1000u;
+        }
+    }
     size_t wg = auto_tune.wg;
     size_t carry_wg = auto_tune.carry_wg;
     if (wg_override != 0u) {
@@ -4172,79 +4183,40 @@ int main(int argc, char* argv[]) {
     auto t0 = std::chrono::steady_clock::now();
     auto last_report_clock = t0;
     const uint32_t total_iters = (mode == TestMode::LL) ? ((p >= 2) ? (p - 2) : 0u) : p;
-    struct ProgressMarker { uint32_t iter_done; cl_event evt; };
-    std::deque<ProgressMarker> progress_markers;
-    const uint32_t progress_chunk_iters = (report_every != 0u) ? report_every : 1000u;
-    const bool progress_is_nvidia = (vendor_name_str.find("nvidia") != std::string::npos || vendor_name_str.find("NVIDIA") != std::string::npos);
-    const size_t max_inflight_markers = progress_is_nvidia ? 4u : 3u;
-    uint32_t last_reported_completed = std::numeric_limits<uint32_t>::max();
-    uint32_t completed_iters = 0u;
-    uint32_t enqueued_iters = 0u;
-
-    auto emit_progress = [&](uint32_t completed, uint32_t enqueued, bool force) {
+    auto maybe_report = [&](uint32_t iter, bool force) {
         auto now = std::chrono::steady_clock::now();
         const double since_last = std::chrono::duration<double>(now - last_report_clock).count();
-        const bool by_iters = (report_every != 0u && (completed == 0u || (completed % report_every) == 0u || completed == total_iters));
+        const bool by_iters = (report_every != 0u && (iter == 0u || (iter % report_every) == 0u));
         const bool by_time = (report_seconds > 0.0 && since_last >= report_seconds);
         if (!force && !by_iters && !by_time) return;
-        if (!force && completed == last_reported_completed) return;
+        check(clFinish(Q), force ? "clFinish progress(force)" : "clFinish progress");
         now = std::chrono::steady_clock::now();
-        const double elapsed = std::chrono::duration<double>(now - t0).count();
-        const double pct = (total_iters != 0u) ? (100.0 * double(completed) / double(total_iters)) : 100.0;
-        const double itps = (elapsed > 0.0) ? (double(completed) / elapsed) : 0.0;
-        const double eta = (itps > 0.0) ? ((double(total_iters - completed)) / itps) : std::numeric_limits<double>::infinity();
-        std::cout << "iter " << completed << "/" << total_iters
+        double elapsed = std::chrono::duration<double>(now - t0).count();
+        double pct = (total_iters != 0) ? (100.0 * double(iter) / double(total_iters)) : 100.0;
+        double itps = (elapsed > 0.0) ? (double(iter) / elapsed) : 0.0;
+        double eta = (itps > 0.0) ? ((double(total_iters - iter)) / itps) : std::numeric_limits<double>::infinity();
+        std::cout << "iter " << iter << "/" << total_iters
                   << " (" << std::fixed << std::setprecision(1) << pct << "%)"
                   << ", elapsed " << std::setprecision(2) << elapsed << " s"
                   << ", it/s " << std::setprecision(1) << itps;
-        if (enqueued > completed) std::cout << ", queued " << (enqueued - completed);
         if (std::isfinite(eta)) std::cout << ", ETA " << std::setprecision(1) << eta << " s";
         std::cout << "\n";
         last_report_clock = now;
-        last_reported_completed = completed;
     };
 
-    auto drain_progress = [&](bool wait_for_one, bool force_report) {
-        if (wait_for_one && !progress_markers.empty()) {
-            check(clWaitForEvents(1, &progress_markers.front().evt), "clWaitForEvents progress");
-        }
-        bool progressed = false;
-        while (!progress_markers.empty()) {
-            cl_int status = CL_QUEUED;
-            check(clGetEventInfo(progress_markers.front().evt, CL_EVENT_COMMAND_EXECUTION_STATUS, sizeof(status), &status, nullptr), "clGetEventInfo progress");
-            if (status != CL_COMPLETE) break;
-            completed_iters = progress_markers.front().iter_done;
-            clReleaseEvent(progress_markers.front().evt);
-            progress_markers.pop_front();
-            progressed = true;
-        }
-        if (progressed) emit_progress(completed_iters, enqueued_iters, force_report);
-    };
-
-    emit_progress(0u, 0u, true);
+    const uint32_t batch_iters = std::max<uint32_t>(1u, report_every != 0u ? report_every : 1000u);
+    maybe_report(0u, true);
     uint32_t iter = 0u;
     while (iter < total_iters) {
-        const uint32_t chunk_end = std::min<uint32_t>(total_iters, iter + progress_chunk_iters);
+        const uint32_t chunk_end = std::min<uint32_t>(total_iters, iter + batch_iters);
         for (; iter < chunk_end; ++iter) {
             enqueue_plan(iter_plan);
             enqueue_plan(post_plan);
         }
-        enqueued_iters = chunk_end;
-        cl_event marker = nullptr;
-        check(clEnqueueMarkerWithWaitList(Q, 0, nullptr, &marker), "clEnqueueMarkerWithWaitList progress");
-        progress_markers.push_back({ chunk_end, marker });
-        check(clFlush(Q), "clFlush progress");
-
-        const auto now = std::chrono::steady_clock::now();
-        const double since_last = std::chrono::duration<double>(now - last_report_clock).count();
-        const bool need_time_report = (report_seconds > 0.0 && since_last >= report_seconds);
-        if (progress_markers.size() >= max_inflight_markers) {
-            drain_progress(true, true);
-        } else if (need_time_report) {
-            drain_progress(false, false);
-        }
+        maybe_report(chunk_end, true);
     }
-    while (!progress_markers.empty()) drain_progress(true, true);
+
+    check(clFinish(Q), "clFinish final");
     std::vector<GF61_31> host_z(h);
     if (use_small31_compact_cycle) {
         std::vector<uint64_t> host_zc(2u * h);
