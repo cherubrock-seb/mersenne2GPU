@@ -3756,7 +3756,7 @@ int main(int argc, char* argv[]) {
                 s *= 16;
                 continue;
             } else if (current_m > 256 && stage_can_use_local1024_fwd(size_t(m_i))) {
-                if (is_gfx9 && m_i == 256 && max_wg >= 256) {
+                if (m_i == 256 && max_wg >= 256 && local_mem_size >= (cl_ulong)(1024u * gf_local_bytes)) {
                     const size_t gs256 = round_up(s, size_t(1)) * 256u;
                     const size_t ls256 = 256u;
                     add_planned_kernel(iter_plan, "forward1024_stage_m256", gs256, ls256, [&](cl_kernel k) {
@@ -3785,7 +3785,7 @@ int main(int argc, char* argv[]) {
             } else if (current_m > 64 && stage_can_use_local256_fwd(size_t(m_i))) {
                 const size_t gs = active;
                 const size_t ls = size_t(m_i);
-                if (is_gfx9 && m_i == 64 && max_wg >= 64) {
+                if (m_i == 64 && max_wg >= 64 && local_mem_size >= (cl_ulong)(256u * gf_local_bytes)) {
                     const size_t gs64 = round_up(s, size_t(1)) * 64u;
                     const size_t ls64 = 64u;
                     add_planned_kernel(iter_plan, "forward256_stage_m64", gs64, ls64, [&](cl_kernel k) {
@@ -3992,7 +3992,7 @@ int main(int argc, char* argv[]) {
                 back_s /= 16;
                 continue;
             }
-            if (is_gfx9 && m_i == 64 && max_wg >= 64) {
+            if (m_i == 64 && max_wg >= 64 && local_mem_size >= (cl_ulong)(256u * gf_local_bytes)) {
                 const size_t gs64 = round_up(back_s, size_t(1)) * 64u;
                 const size_t ls64 = 64u;
                 add_planned_kernel(iter_plan, "backward4_stage_m64", gs64, ls64, [&](cl_kernel k) {
@@ -4003,7 +4003,7 @@ int main(int argc, char* argv[]) {
                 }, "enqueue plan backward4_stage_m64");
                 continue;
             }
-            if (is_gfx9 && m_i == 16 && max_wg >= 16) {
+            if (m_i == 16 && max_wg >= 16) {
                 const size_t gs16 = round_up(back_s, size_t(1)) * 16u;
                 const size_t ls16 = 16u;
                 add_planned_kernel(iter_plan, "backward4_stage_m16", gs16, ls16, [&](cl_kernel k) {
@@ -4078,7 +4078,7 @@ int main(int argc, char* argv[]) {
             } else if (stage_can_use_local(size_t(m_i))) {
                 const size_t gs = active;
                 const size_t ls = size_t(m_i);
-                if (is_gfx9 && m_i == 256 && max_wg >= 256) {
+                if (m_i == 256 && max_wg >= 256) {
                     const size_t gs256 = round_up(back_s, size_t(1)) * 256u;
                     const size_t ls256 = 256u;
                     add_planned_kernel(iter_plan, "backward4_stage_m256", gs256, ls256, [&](cl_kernel k) {
