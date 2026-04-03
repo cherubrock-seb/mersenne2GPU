@@ -3453,7 +3453,7 @@ int main(int argc, char* argv[]) {
     const uint32_t sub_val_ll = 2u;
 
     const size_t gf_local_bytes = 24u;
-    const size_t local_stage_cap = std::min<size_t>(max_wg, is_gfx9 ? 256u : 128u);
+    const size_t local_stage_cap = std::min<size_t>(max_wg, (is_gfx9 || is_nvidia_dev) ? 256u : 128u);
     auto stage_can_use_local = [&](size_t m_stage) -> bool {
         if (m_stage == 0 || m_stage > local_stage_cap) return false;
         const size_t needed = 4u * m_stage * gf_local_bytes;
@@ -3503,9 +3503,13 @@ int main(int argc, char* argv[]) {
     };
 
     auto can_use_forward_pair_large2 = [&](size_t s_stage, size_t m_stage) -> bool {
-        if (!is_gfx9 || m_stage < 1024 || (m_stage & 3u) != 0u) return false;
-        if (s_stage < 64u) return false;
-        return true;
+        if (m_stage < 1024 || (m_stage & 3u) != 0u) return false;
+        if (is_gfx9) return s_stage >= 64u;
+        if (is_nvidia_dev) {
+            if (max_wg < 64 || local_mem_size < (cl_ulong)(16u * gf_local_bytes)) return false;
+            return s_stage >= 32u;
+        }
+        return false;
     };
 
     auto use_x4_path = [&](size_t active, size_t m_stage) -> bool {
@@ -3990,7 +3994,7 @@ int main(int argc, char* argv[]) {
                 }
                 break;
             }
-            if (is_gfx9 && back_s > 4 && m_i == 64 && max_wg >= 256) {
+            if ((is_gfx9 || is_nvidia_dev) && back_s > 4 && m_i == 64 && max_wg >= 256 && local_mem_size >= (cl_ulong)(1024u * gf_local_bytes)) {
                 const size_t gs256 = round_up(back_s >> 2, size_t(1)) * 256u;
                 const size_t ls256 = 256u;
                 add_planned_kernel(iter_plan, "backward16_stage_m64", gs256, ls256, [&](cl_kernel k) {
