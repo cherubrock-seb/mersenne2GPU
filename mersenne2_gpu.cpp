@@ -3114,7 +3114,7 @@ static AutoTuneChoice choose_auto_tune(uint32_t h_u32, size_t max_wg, cl_ulong l
 
 int main(int argc, char* argv[]) {
     if (argc < 2) {
-        std::cerr << "Usage: " << argv[0] << " <p> [ll|prp] [report_every] [-d device_id] [-R report_seconds] [-W wg] [-B carry_pairs]\n";
+        std::cerr << "Usage: " << argv[0] << " <p> [ll|prp] [report_every] [-d device_id] [-R report_seconds] [-W fft_wg] [-CW carry_wg] [-B carry_pairs] [-LS local_stage_cap] [-N max_iters] [--show-defaults]\n";
         return 1;
     }
 
@@ -3124,7 +3124,11 @@ int main(int argc, char* argv[]) {
     double report_seconds = 2.0;
     uint32_t device_index = 0u;
     uint32_t wg_override = 0u;
+    uint32_t carry_wg_override = 0u;
     uint32_t carry_pairs_override = 0u;
+    uint32_t local_stage_cap_override = 0u;
+    uint32_t max_iters_override = 0u;
+    bool show_defaults_only = false;
     bool report_every_set = false;
 
     for (int i = 2; i < argc; ++i) {
@@ -3149,18 +3153,38 @@ int main(int argc, char* argv[]) {
                 return 1;
             }
             wg_override = static_cast<uint32_t>(std::strtoul(argv[++i], nullptr, 10));
+        } else if (arg == "-CW") {
+            if (i + 1 >= argc) {
+                std::cerr << "Missing carry work-group size after -CW\n";
+                return 1;
+            }
+            carry_wg_override = static_cast<uint32_t>(std::strtoul(argv[++i], nullptr, 10));
         } else if (arg == "-B") {
             if (i + 1 >= argc) {
                 std::cerr << "Missing carry_pairs after -B\n";
                 return 1;
             }
             carry_pairs_override = static_cast<uint32_t>(std::strtoul(argv[++i], nullptr, 10));
+        } else if (arg == "-LS") {
+            if (i + 1 >= argc) {
+                std::cerr << "Missing local stage cap after -LS\n";
+                return 1;
+            }
+            local_stage_cap_override = static_cast<uint32_t>(std::strtoul(argv[++i], nullptr, 10));
+        } else if (arg == "-N") {
+            if (i + 1 >= argc) {
+                std::cerr << "Missing max iterations after -N\n";
+                return 1;
+            }
+            max_iters_override = static_cast<uint32_t>(std::strtoul(argv[++i], nullptr, 10));
+        } else if (arg == "--show-defaults") {
+            show_defaults_only = true;
         } else if (!report_every_set) {
             report_every = static_cast<uint32_t>(std::strtoul(arg.c_str(), nullptr, 10));
             report_every_set = true;
         } else {
             std::cerr << "Unknown argument: " << arg << "\n";
-            std::cerr << "Usage: " << argv[0] << " <p> [ll|prp] [report_every] [-d device_id] [-R report_seconds] [-W wg] [-B carry_pairs]\n";
+            std::cerr << "Usage: " << argv[0] << " <p> [ll|prp] [report_every] [-d device_id] [-R report_seconds] [-W fft_wg] [-CW carry_wg] [-B carry_pairs] [-LS local_stage_cap] [-N max_iters] [--show-defaults]\n";
             return 1;
         }
     }
@@ -3233,7 +3257,22 @@ int main(int argc, char* argv[]) {
         wg = o;
         carry_wg = o;
     }
+    if (carry_wg_override != 0u) {
+        const size_t o = std::max<size_t>(1u, std::min<size_t>(static_cast<size_t>(carry_wg_override), max_wg));
+        carry_wg = o;
+    }
     if (carry_wg > max_wg) carry_wg = max_wg;
+    if (show_defaults_only) {
+        const size_t default_local_stage_cap = std::min<size_t>(max_wg, (is_gfx9 || is_nvidia_dev) ? 256u : 128u);
+        std::cout << "vendor=" << vendor_name << ", compute_units=" << compute_units
+                  << ", max_wg=" << max_wg << ", local_mem=" << local_mem_size << "\n"
+                  << "auto_wg=" << auto_tune.wg << ", auto_carry_wg=" << auto_tune.carry_wg
+                  << ", auto_carry_pairs=" << auto_tune.carry_pairs << ", auto_profile=" << auto_tune.profile << "\n"
+                  << "effective_wg=" << wg << ", effective_carry_wg=" << carry_wg
+                  << ", effective_local_stage_cap=" << ((local_stage_cap_override != 0u) ? std::min<size_t>(max_wg, local_stage_cap_override) : default_local_stage_cap)
+                  << ", effective_max_iters=" << max_iters_override << "\n";
+        return 0;
+    }
 
     cl_int err = CL_SUCCESS;
     cl_context C = clCreateContext(nullptr, 1, &D, nullptr, nullptr, &err); check(err, "clCreateContext");
@@ -3414,7 +3453,7 @@ int main(int argc, char* argv[]) {
     // very large transforms where it has been performance-tested. Smaller cases use
     // the generic scan/drain path to preserve correctness.
     if (h_u32 < (1u << 16)) can_use_direct_block_carry = false;
-    std::cout << "carry_blocks=" << nblocks_u32 << ", avg_pairs_per_block=" << std::fixed << std::setprecision(2) << (double(h_u32) / double(nblocks_u32)) << ", carry_target_pairs=" << target_pairs_per_block << ", tuned_wg=" << wg << ", carry_wg=" << carry_wg << ", auto_profile=" << auto_tune.profile;
+    std::cout << "carry_blocks=" << nblocks_u32 << ", avg_pairs_per_block=" << std::fixed << std::setprecision(2) << (double(h_u32) / double(nblocks_u32)) << ", carry_target_pairs=" << target_pairs_per_block << ", tuned_wg=" << wg << ", carry_wg=" << carry_wg << ", local_stage_cap=" << ((local_stage_cap_override != 0u) ? std::min<size_t>(max_wg, static_cast<size_t>(local_stage_cap_override)) : std::min<size_t>(max_wg, (is_gfx9 || is_nvidia_dev) ? 256u : 128u)) << ", auto_profile=" << auto_tune.profile;
     if (wg_override != 0u || carry_pairs_override != 0u) std::cout << " (manual override)";
     std::cout << "\n";
 
@@ -3453,7 +3492,8 @@ int main(int argc, char* argv[]) {
     const uint32_t sub_val_ll = 2u;
 
     const size_t gf_local_bytes = 24u;
-    const size_t local_stage_cap = std::min<size_t>(max_wg, (is_gfx9 || is_nvidia_dev) ? 256u : 128u);
+    size_t local_stage_cap = std::min<size_t>(max_wg, (is_gfx9 || is_nvidia_dev) ? 256u : 128u);
+    if (local_stage_cap_override != 0u) local_stage_cap = std::min<size_t>(max_wg, static_cast<size_t>(local_stage_cap_override));
     auto stage_can_use_local = [&](size_t m_stage) -> bool {
         if (m_stage == 0 || m_stage > local_stage_cap) return false;
         const size_t needed = 4u * m_stage * gf_local_bytes;
@@ -4186,7 +4226,8 @@ int main(int argc, char* argv[]) {
 
     auto t0 = std::chrono::steady_clock::now();
     auto last_report_clock = t0;
-    const uint32_t total_iters = (mode == TestMode::LL) ? ((p >= 2) ? (p - 2) : 0u) : p;
+    uint32_t total_iters = (mode == TestMode::LL) ? ((p >= 2) ? (p - 2) : 0u) : p;
+    if (max_iters_override != 0u) total_iters = std::min<uint32_t>(total_iters, max_iters_override);
     auto maybe_report = [&](uint32_t iter, bool force) {
         auto now = std::chrono::steady_clock::now();
         const double since_last = std::chrono::duration<double>(now - last_report_clock).count();
@@ -4209,6 +4250,7 @@ int main(int argc, char* argv[]) {
     };
 
     const uint32_t batch_iters = std::max<uint32_t>(1u, report_every != 0u ? report_every : 1000u);
+    if (max_iters_override != 0u) std::cout << "benchmark_iters=" << total_iters << "\n";
     maybe_report(0u, true);
     uint32_t iter = 0u;
     while (iter < total_iters) {
