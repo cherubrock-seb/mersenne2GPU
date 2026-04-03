@@ -3096,9 +3096,13 @@ static AutoTuneChoice choose_auto_tune(uint32_t h_u32, size_t max_wg, cl_ulong l
         // Keep larger jobs on 128 by default unless the device looks like a smaller
         // 48KB-local-memory NVIDIA part where 64 remains a safer starting point.
         const bool nvidia_small_local = (local_mem_size <= 49152u);
-        if (h_u32 <= (1u << 18)) r.wg = (max_wg >= 64u) ? 64u : (max_wg >= 32u ? 32u : 16u);
-        else if (h_u32 <= (1u << 19) && nvidia_small_local) r.wg = (max_wg >= 64u) ? 64u : (max_wg >= 32u ? 32u : 16u);
-        else r.wg = (max_wg >= 128u) ? 128u : (max_wg >= 64u ? 64u : 32u);
+        // Safer default: keep 64 only in the empirically validated T4 window around h=2^18..2^19.
+        // Smaller sizes and most other cases stay on 128 by default to avoid correctness/launch regressions.
+        if (h_u32 >= (1u << 18) && h_u32 <= (1u << 19) && nvidia_small_local) {
+            r.wg = (max_wg >= 64u) ? 64u : (max_wg >= 32u ? 32u : 16u);
+        } else {
+            r.wg = (max_wg >= 128u) ? 128u : (max_wg >= 64u ? 64u : 32u);
+        }
         r.carry_wg = (max_wg >= 64u) ? 64u : (max_wg >= 32u ? 32u : 16u);
         if (h_u32 >= (1u << 20)) r.carry_pairs = 8u;
         else if (h_u32 >= (1u << 18)) r.carry_pairs = 8u;
