@@ -59,7 +59,6 @@
 #include <limits>
 #include <string>
 #include <vector>
-#include <deque>
 
 static const uint64_t Z61_p = (uint64_t(1) << 61) - 1;
 static const uint32_t Z31_p = (uint32_t(1) << 31) - 1;
@@ -3026,6 +3025,7 @@ static std::string lower_ascii(std::string s) {
 
 struct AutoTuneChoice {
     uint32_t wg;
+    uint32_t carry_wg;
     uint32_t carry_pairs;
     std::string profile;
 };
@@ -3073,6 +3073,7 @@ static AutoTuneChoice choose_auto_tune(uint32_t h_u32, size_t max_wg, cl_ulong l
 
     AutoTuneChoice r{};
     r.wg = choose_wg_for_device(max_wg, dev_lower, vendor_lower, compute_units);
+    r.carry_wg = r.wg;
     r.carry_pairs = 64u;
     r.profile = "generic-auto";
 
@@ -3088,24 +3089,16 @@ static AutoTuneChoice choose_auto_tune(uint32_t h_u32, size_t max_wg, cl_ulong l
         else if (h_u32 >= (1u << 12)) r.carry_pairs = 128u;
         else r.carry_pairs = std::min<uint32_t>(256u, std::max<uint32_t>(1u, h_u32));
     } else if (is_nvidia) {
-        r.profile = "nvidia-warp32-smallblocks";
-        // On NVIDIA warp32 devices, especially Turing/Ampere-class cards, the carry path
-        // benefits a lot from the same smaller-block strategy observed on AMD once the
-        // transform is large enough to enable the direct block-carry fast path.
-        // Also prefer WG=64 on these larger transforms: two warps per work-group tends to
-        // balance occupancy and local synchronization better than WG=128 here.
-        if (h_u32 >= (1u << 18)) {
-            r.wg = static_cast<uint32_t>(std::min<size_t>(64u, std::max<size_t>(1u, max_wg)));
-            r.carry_pairs = 8u;
-        } else if (h_u32 >= (1u << 16)) {
-            r.wg = static_cast<uint32_t>(std::min<size_t>(64u, std::max<size_t>(1u, max_wg)));
-            r.carry_pairs = 16u;
-        } else if (h_u32 >= (1u << 14)) {
-            if (max_wg >= 64u) r.wg = 64u;
-            r.carry_pairs = 32u;
-        } else {
-            r.carry_pairs = 32u;
-        }
+        r.profile = "nvidia-warp32-splitwg";
+        // On NVIDIA, FFT kernels often prefer 128 threads while the carry fast path
+        // benefits from smaller 64-thread groups and fine carry blocks.
+        r.wg = (max_wg >= 128u) ? 128u : (max_wg >= 64u ? 64u : 32u);
+        r.carry_wg = (max_wg >= 64u) ? 64u : (max_wg >= 32u ? 32u : 16u);
+        if (h_u32 >= (1u << 20)) r.carry_pairs = 8u;
+        else if (h_u32 >= (1u << 18)) r.carry_pairs = 8u;
+        else if (h_u32 >= (1u << 16)) r.carry_pairs = 16u;
+        else if (h_u32 >= (1u << 14)) r.carry_pairs = 32u;
+        else r.carry_pairs = 32u;
     } else if (is_apple) {
         r.profile = "apple-tile";
         if (local_mem_size <= 32768u) r.carry_pairs = (h_u32 >= (1u << 14)) ? 64u : 32u;
@@ -3222,9 +3215,13 @@ int main(int argc, char* argv[]) {
     const bool is_gfx9 = (dev_name_lower.find("gfx9") != std::string::npos || dev_name_lower.find("gfx90") != std::string::npos || dev_name_lower.find("gfx906") != std::string::npos || dev_name_lower.find("vega") != std::string::npos || dev_name_lower.find("radeon vii") != std::string::npos);
     const AutoTuneChoice auto_tune = choose_auto_tune(static_cast<uint32_t>(h), max_wg, local_mem_size, compute_units, dev_name_str, vendor_name_str);
     size_t wg = auto_tune.wg;
+    size_t carry_wg = auto_tune.carry_wg;
     if (wg_override != 0u) {
-        wg = std::max<size_t>(1u, std::min<size_t>(static_cast<size_t>(wg_override), max_wg));
+        const size_t o = std::max<size_t>(1u, std::min<size_t>(static_cast<size_t>(wg_override), max_wg));
+        wg = o;
+        carry_wg = o;
     }
+    if (carry_wg > max_wg) carry_wg = max_wg;
 
     cl_int err = CL_SUCCESS;
     cl_context C = clCreateContext(nullptr, 1, &D, nullptr, nullptr, &err); check(err, "clCreateContext");
@@ -3386,7 +3383,7 @@ int main(int argc, char* argv[]) {
         if (bi.bits <= 128u) { can_use_direct_block_carry = false; break; }
     }
     const bool can_use_direct8_mask = can_use_direct_block_carry && target_pairs_per_block == 8u && (h_u32 % 8u) == 0u;
-    const bool can_use_group_fused_direct8 = can_use_direct8_mask && wg == 64u && (nblocks_u32 % 64u) == 0u;
+    const bool can_use_group_fused_direct8 = can_use_direct8_mask && carry_wg == 64u && (nblocks_u32 % 64u) == 0u;
     const uint32_t ngroups_direct8 = can_use_group_fused_direct8 ? (nblocks_u32 / 64u) : 0u;
     std::vector<uint16_t> block_wide_mask;
     if (can_use_direct8_mask) {
@@ -3405,7 +3402,7 @@ int main(int argc, char* argv[]) {
     // very large transforms where it has been performance-tested. Smaller cases use
     // the generic scan/drain path to preserve correctness.
     if (h_u32 < (1u << 16)) can_use_direct_block_carry = false;
-    std::cout << "carry_blocks=" << nblocks_u32 << ", avg_pairs_per_block=" << std::fixed << std::setprecision(2) << (double(h_u32) / double(nblocks_u32)) << ", carry_target_pairs=" << target_pairs_per_block << ", tuned_wg=" << wg << ", auto_profile=" << auto_tune.profile;
+    std::cout << "carry_blocks=" << nblocks_u32 << ", avg_pairs_per_block=" << std::fixed << std::setprecision(2) << (double(h_u32) / double(nblocks_u32)) << ", carry_target_pairs=" << target_pairs_per_block << ", tuned_wg=" << wg << ", carry_wg=" << carry_wg << ", auto_profile=" << auto_tune.profile;
     if (wg_override != 0u || carry_pairs_override != 0u) std::cout << " (manual override)";
     std::cout << "\n";
 
@@ -3699,8 +3696,8 @@ int main(int argc, char* argv[]) {
     };
 
     const size_t gs_h_plan = round_up(h, wg);
-    const size_t gs_blocks_plan = round_up(size_t(nblocks_u32), wg);
-    const size_t gs_groups_direct8_plan = can_use_group_fused_direct8 ? round_up(size_t(ngroups_direct8), wg) : 0u;
+    const size_t gs_blocks_plan = round_up(size_t(nblocks_u32), carry_wg);
+    const size_t gs_groups_direct8_plan = can_use_group_fused_direct8 ? round_up(size_t(ngroups_direct8), carry_wg) : 0u;
     const size_t gs_serial_plan = 1;
     const bool use_small31_entry_refresh = can_use_group_fused_direct8_small31;
 
@@ -4141,30 +4138,30 @@ int main(int argc, char* argv[]) {
     if (can_use_direct_block_carry) {
         if (can_use_group_fused_direct8_small31) {
             if (use_small31_compact_cycle) {
-                add_existing_step(post_plan, Kbpd8fsc, gs_groups_direct8_plan, wg, "enqueue plan block_prepare_direct8_mask_fused64_small31_compact_kernel");
-                add_existing_step(post_plan, Kbagh8sc, gs_groups_direct8_plan, wg, "enqueue plan block_apply_group_head_direct8_mask_small31_compact_kernel");
+                add_existing_step(post_plan, Kbpd8fsc, gs_groups_direct8_plan, carry_wg, "enqueue plan block_prepare_direct8_mask_fused64_small31_compact_kernel");
+                add_existing_step(post_plan, Kbagh8sc, gs_groups_direct8_plan, carry_wg, "enqueue plan block_apply_group_head_direct8_mask_small31_compact_kernel");
             } else {
-                add_existing_step(post_plan, Kbpd8fs, gs_groups_direct8_plan, wg, "enqueue plan block_prepare_direct8_mask_fused64_small31_kernel");
-                add_existing_step(post_plan, Kbagh8s, gs_groups_direct8_plan, wg, "enqueue plan block_apply_group_head_direct8_mask_small31_kernel");
+                add_existing_step(post_plan, Kbpd8fs, gs_groups_direct8_plan, carry_wg, "enqueue plan block_prepare_direct8_mask_fused64_small31_kernel");
+                add_existing_step(post_plan, Kbagh8s, gs_groups_direct8_plan, carry_wg, "enqueue plan block_apply_group_head_direct8_mask_small31_kernel");
             }
         } else if (can_use_group_fused_direct8) {
-            add_existing_step(post_plan, Kbpd8f, gs_groups_direct8_plan, wg, "enqueue plan block_prepare_direct8_mask_fused64_kernel");
-            add_existing_step(post_plan, Kbagh8, gs_groups_direct8_plan, wg, "enqueue plan block_apply_group_head_direct8_mask_kernel");
+            add_existing_step(post_plan, Kbpd8f, gs_groups_direct8_plan, carry_wg, "enqueue plan block_prepare_direct8_mask_fused64_kernel");
+            add_existing_step(post_plan, Kbagh8, gs_groups_direct8_plan, carry_wg, "enqueue plan block_apply_group_head_direct8_mask_kernel");
         } else if (can_use_direct8_mask) {
-            add_existing_step(post_plan, Kbpd8, gs_blocks_plan, wg, "enqueue plan block_prepare_direct8_mask_kernel");
-            add_existing_step(post_plan, Kbacd8, gs_blocks_plan, wg, "enqueue plan block_apply_carry_direct8_mask_kernel");
+            add_existing_step(post_plan, Kbpd8, gs_blocks_plan, carry_wg, "enqueue plan block_prepare_direct8_mask_kernel");
+            add_existing_step(post_plan, Kbacd8, gs_blocks_plan, carry_wg, "enqueue plan block_apply_carry_direct8_mask_kernel");
         } else {
-            add_existing_step(post_plan, Kbpd, gs_blocks_plan, wg, "enqueue plan block_prepare_direct_kernel");
-            add_existing_step(post_plan, Kbacd, gs_blocks_plan, wg, "enqueue plan block_apply_carry_direct_kernel");
+            add_existing_step(post_plan, Kbpd, gs_blocks_plan, carry_wg, "enqueue plan block_prepare_direct_kernel");
+            add_existing_step(post_plan, Kbacd, gs_blocks_plan, carry_wg, "enqueue plan block_apply_carry_direct_kernel");
         }
     } else {
-        add_existing_step(post_plan, Kbp, gs_blocks_plan, wg, "enqueue plan block_prepare_kernel");
-        add_existing_step(post_plan, Kbci, gs_blocks_plan, wg, "enqueue plan init_block_carry_kernel");
+        add_existing_step(post_plan, Kbp, gs_blocks_plan, carry_wg, "enqueue plan block_prepare_kernel");
+        add_existing_step(post_plan, Kbci, gs_blocks_plan, carry_wg, "enqueue plan init_block_carry_kernel");
         if ((nblocks_u32 & 1u) == 0u && nblocks_u32 >= 2u) {
             const uint32_t phase_rounds = is_gfx9 ? 2u : 1u;
             for (uint32_t r = 0; r < phase_rounds; ++r) {
-                add_existing_step(post_plan, Kbcp0, gs_blocks_plan, wg, "enqueue plan block_carry_phase even");
-                add_existing_step(post_plan, Kbcp1, gs_blocks_plan, wg, "enqueue plan block_carry_phase odd");
+                add_existing_step(post_plan, Kbcp0, gs_blocks_plan, carry_wg, "enqueue plan block_carry_phase even");
+                add_existing_step(post_plan, Kbcp1, gs_blocks_plan, carry_wg, "enqueue plan block_carry_phase odd");
             }
         }
         add_existing_step(post_plan, Kbcd, gs_serial_plan, 0u, "enqueue plan block_carry_drain_kernel");
@@ -4174,25 +4171,18 @@ int main(int argc, char* argv[]) {
     auto t0 = std::chrono::steady_clock::now();
     auto last_report_clock = t0;
     const uint32_t total_iters = (mode == TestMode::LL) ? ((p >= 2) ? (p - 2) : 0u) : p;
-    struct ProgressMarker { uint32_t iter_done; cl_event evt; };
-    std::deque<ProgressMarker> progress_markers;
-    const uint32_t progress_chunk_iters = (report_every != 0u) ? report_every : 1000u;
-    const bool progress_is_nvidia = (vendor_name_str.find("nvidia") != std::string::npos || vendor_name_str.find("NVIDIA") != std::string::npos);
-    const size_t max_inflight_markers = progress_is_nvidia ? 4u : 3u;
-    uint32_t last_reported_iter = std::numeric_limits<uint32_t>::max();
-
-    auto emit_progress = [&](uint32_t iter, bool force) {
+    auto maybe_report = [&](uint32_t iter, bool force) {
         auto now = std::chrono::steady_clock::now();
         const double since_last = std::chrono::duration<double>(now - last_report_clock).count();
-        const bool by_iters = (report_every != 0u && (iter == 0u || (iter % report_every) == 0u || iter == total_iters));
+        const bool by_iters = (report_every != 0u && (iter == 0u || (iter % report_every) == 0u));
         const bool by_time = (report_seconds > 0.0 && since_last >= report_seconds);
         if (!force && !by_iters && !by_time) return;
-        if (!force && iter == last_reported_iter) return;
+        check(clFinish(Q), "clFinish progress");
         now = std::chrono::steady_clock::now();
-        const double elapsed = std::chrono::duration<double>(now - t0).count();
-        const double pct = (total_iters != 0u) ? (100.0 * double(iter) / double(total_iters)) : 100.0;
-        const double itps = (elapsed > 0.0) ? (double(iter) / elapsed) : 0.0;
-        const double eta = (itps > 0.0) ? ((double(total_iters - iter)) / itps) : std::numeric_limits<double>::infinity();
+        double elapsed = std::chrono::duration<double>(now - t0).count();
+        double pct = (total_iters != 0) ? (100.0 * double(iter) / double(total_iters)) : 100.0;
+        double itps = (elapsed > 0.0) ? (double(iter) / elapsed) : 0.0;
+        double eta = (itps > 0.0) ? ((double(total_iters - iter)) / itps) : std::numeric_limits<double>::infinity();
         std::cout << "iter " << iter << "/" << total_iters
                   << " (" << std::fixed << std::setprecision(1) << pct << "%)"
                   << ", elapsed " << std::setprecision(2) << elapsed << " s"
@@ -4200,51 +4190,15 @@ int main(int argc, char* argv[]) {
         if (std::isfinite(eta)) std::cout << ", ETA " << std::setprecision(1) << eta << " s";
         std::cout << "\n";
         last_report_clock = now;
-        last_reported_iter = iter;
     };
 
-    auto drain_progress = [&](bool wait_for_one, bool force_report) {
-        if (wait_for_one && !progress_markers.empty()) {
-            check(clWaitForEvents(1, &progress_markers.front().evt), "clWaitForEvents progress");
-        }
-        bool progressed = false;
-        uint32_t newest_iter = 0u;
-        while (!progress_markers.empty()) {
-            cl_int status = CL_QUEUED;
-            check(clGetEventInfo(progress_markers.front().evt, CL_EVENT_COMMAND_EXECUTION_STATUS, sizeof(status), &status, nullptr), "clGetEventInfo progress");
-            if (status != CL_COMPLETE) break;
-            newest_iter = progress_markers.front().iter_done;
-            clReleaseEvent(progress_markers.front().evt);
-            progress_markers.pop_front();
-            progressed = true;
-        }
-        if (progressed) emit_progress(newest_iter, force_report);
-    };
-
-    emit_progress(0u, true);
-    uint32_t iter = 0u;
-    while (iter < total_iters) {
-        const uint32_t chunk_end = std::min<uint32_t>(total_iters, iter + progress_chunk_iters);
-        for (; iter < chunk_end; ++iter) {
-            enqueue_plan(iter_plan);
-            enqueue_plan(post_plan);
-        }
-        cl_event marker = nullptr;
-        check(clEnqueueMarkerWithWaitList(Q, 0, nullptr, &marker), "clEnqueueMarkerWithWaitList progress");
-        progress_markers.push_back({ chunk_end, marker });
-        check(clFlush(Q), "clFlush progress");
-
-        const auto now = std::chrono::steady_clock::now();
-        const double since_last = std::chrono::duration<double>(now - last_report_clock).count();
-        const bool need_time_report = (report_seconds > 0.0 && since_last >= report_seconds);
-        if (progress_markers.size() >= max_inflight_markers) {
-            drain_progress(true, true);
-        } else if (need_time_report) {
-            drain_progress(false, false);
-        }
+    for (uint32_t iter = 0; iter < total_iters; ++iter) {
+        maybe_report(iter, false);
+        enqueue_plan(iter_plan);
+        enqueue_plan(post_plan);
     }
-    while (!progress_markers.empty()) drain_progress(true, true);
 
+    check(clFinish(Q), "clFinish final");
     std::vector<GF61_31> host_z(h);
     if (use_small31_compact_cycle) {
         std::vector<uint64_t> host_zc(2u * h);
