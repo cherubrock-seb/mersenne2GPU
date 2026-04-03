@@ -3524,9 +3524,8 @@ int main(int argc, char* argv[]) {
         return needed <= static_cast<size_t>(local_mem_size);
     };
     auto stage_can_use_local1024_fwd = [&](size_t m_stage) -> bool {
-        if (h < 65536) return false;
-        if (m_stage < 256 || (m_stage & 255u) != 0u) return false;
-        return stage_can_use_local(m_stage);
+        (void)m_stage;
+        return false;
     };
     auto stage_can_use_local2_bwd = [&](size_t m_stage) -> bool {
         const size_t ls = 4u * m_stage;
@@ -3547,21 +3546,12 @@ int main(int argc, char* argv[]) {
         return needed <= static_cast<size_t>(local_mem_size);
     };
     auto stage_can_use_local1024_bwd = [&](size_t m_stage) -> bool {
-        if (h < 65536) return false;
-        const size_t ls = 256u * m_stage;
-        if (m_stage == 0 || ls > local_stage_cap) return false;
-        const size_t needed = 1024u * m_stage * gf_local_bytes;
-        return needed <= static_cast<size_t>(local_mem_size);
+        (void)m_stage;
+        return false;
     };
 
     auto can_use_forward_pair_large2 = [&](size_t s_stage, size_t m_stage) -> bool {
-        if (h < 65536) return false;
-        if (m_stage < 1024 || (m_stage & 3u) != 0u) return false;
-        if (is_gfx9) return s_stage >= 64u;
-        if (is_nvidia_dev) {
-            if (max_wg < 64 || local_mem_size < (cl_ulong)(16u * gf_local_bytes)) return false;
-            return s_stage >= 32u;
-        }
+        (void)s_stage; (void)m_stage;
         return false;
     };
 
@@ -3575,7 +3565,7 @@ int main(int argc, char* argv[]) {
     };
 
     auto can_use_chunk64_0 = [&]() -> bool {
-        return (h >= 65536) && (max_wg >= 64);
+        return false;
     };
 
     check(clSetKernelArg(Kw, 0, sizeof(cl_mem), &Bz), "set arg weight z");
