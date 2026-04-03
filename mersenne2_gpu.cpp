@@ -4177,28 +4177,31 @@ int main(int argc, char* argv[]) {
     const uint32_t progress_chunk_iters = (report_every != 0u) ? report_every : 1000u;
     const bool progress_is_nvidia = (vendor_name_str.find("nvidia") != std::string::npos || vendor_name_str.find("NVIDIA") != std::string::npos);
     const size_t max_inflight_markers = progress_is_nvidia ? 4u : 3u;
-    uint32_t last_reported_iter = std::numeric_limits<uint32_t>::max();
+    uint32_t last_reported_completed = std::numeric_limits<uint32_t>::max();
+    uint32_t completed_iters = 0u;
+    uint32_t enqueued_iters = 0u;
 
-    auto emit_progress = [&](uint32_t iter, bool force) {
+    auto emit_progress = [&](uint32_t completed, uint32_t enqueued, bool force) {
         auto now = std::chrono::steady_clock::now();
         const double since_last = std::chrono::duration<double>(now - last_report_clock).count();
-        const bool by_iters = (report_every != 0u && (iter == 0u || (iter % report_every) == 0u || iter == total_iters));
+        const bool by_iters = (report_every != 0u && (completed == 0u || (completed % report_every) == 0u || completed == total_iters));
         const bool by_time = (report_seconds > 0.0 && since_last >= report_seconds);
         if (!force && !by_iters && !by_time) return;
-        if (!force && iter == last_reported_iter) return;
+        if (!force && completed == last_reported_completed) return;
         now = std::chrono::steady_clock::now();
         const double elapsed = std::chrono::duration<double>(now - t0).count();
-        const double pct = (total_iters != 0u) ? (100.0 * double(iter) / double(total_iters)) : 100.0;
-        const double itps = (elapsed > 0.0) ? (double(iter) / elapsed) : 0.0;
-        const double eta = (itps > 0.0) ? ((double(total_iters - iter)) / itps) : std::numeric_limits<double>::infinity();
-        std::cout << "iter " << iter << "/" << total_iters
+        const double pct = (total_iters != 0u) ? (100.0 * double(completed) / double(total_iters)) : 100.0;
+        const double itps = (elapsed > 0.0) ? (double(completed) / elapsed) : 0.0;
+        const double eta = (itps > 0.0) ? ((double(total_iters - completed)) / itps) : std::numeric_limits<double>::infinity();
+        std::cout << "iter " << completed << "/" << total_iters
                   << " (" << std::fixed << std::setprecision(1) << pct << "%)"
                   << ", elapsed " << std::setprecision(2) << elapsed << " s"
                   << ", it/s " << std::setprecision(1) << itps;
+        if (enqueued > completed) std::cout << ", queued " << (enqueued - completed);
         if (std::isfinite(eta)) std::cout << ", ETA " << std::setprecision(1) << eta << " s";
         std::cout << "\n";
         last_report_clock = now;
-        last_reported_iter = iter;
+        last_reported_completed = completed;
     };
 
     auto drain_progress = [&](bool wait_for_one, bool force_report) {
@@ -4206,20 +4209,19 @@ int main(int argc, char* argv[]) {
             check(clWaitForEvents(1, &progress_markers.front().evt), "clWaitForEvents progress");
         }
         bool progressed = false;
-        uint32_t newest_iter = 0u;
         while (!progress_markers.empty()) {
             cl_int status = CL_QUEUED;
             check(clGetEventInfo(progress_markers.front().evt, CL_EVENT_COMMAND_EXECUTION_STATUS, sizeof(status), &status, nullptr), "clGetEventInfo progress");
             if (status != CL_COMPLETE) break;
-            newest_iter = progress_markers.front().iter_done;
+            completed_iters = progress_markers.front().iter_done;
             clReleaseEvent(progress_markers.front().evt);
             progress_markers.pop_front();
             progressed = true;
         }
-        if (progressed) emit_progress(newest_iter, force_report);
+        if (progressed) emit_progress(completed_iters, enqueued_iters, force_report);
     };
 
-    emit_progress(0u, true);
+    emit_progress(0u, 0u, true);
     uint32_t iter = 0u;
     while (iter < total_iters) {
         const uint32_t chunk_end = std::min<uint32_t>(total_iters, iter + progress_chunk_iters);
@@ -4227,6 +4229,7 @@ int main(int argc, char* argv[]) {
             enqueue_plan(iter_plan);
             enqueue_plan(post_plan);
         }
+        enqueued_iters = chunk_end;
         cl_event marker = nullptr;
         check(clEnqueueMarkerWithWaitList(Q, 0, nullptr, &marker), "clEnqueueMarkerWithWaitList progress");
         progress_markers.push_back({ chunk_end, marker });
