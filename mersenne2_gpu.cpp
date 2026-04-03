@@ -3087,10 +3087,24 @@ static AutoTuneChoice choose_auto_tune(uint32_t h_u32, size_t max_wg, cl_ulong l
         else if (h_u32 >= (1u << 12)) r.carry_pairs = 128u;
         else r.carry_pairs = std::min<uint32_t>(256u, std::max<uint32_t>(1u, h_u32));
     } else if (is_nvidia) {
-        r.profile = "nvidia-warp32";
-        if (h_u32 >= (1u << 18)) r.carry_pairs = 128u;
-        else if (h_u32 >= (1u << 14)) r.carry_pairs = 64u;
-        else r.carry_pairs = 32u;
+        r.profile = "nvidia-warp32-smallblocks";
+        // On NVIDIA warp32 devices, especially Turing/Ampere-class cards, the carry path
+        // benefits a lot from the same smaller-block strategy observed on AMD once the
+        // transform is large enough to enable the direct block-carry fast path.
+        // Also prefer WG=64 on these larger transforms: two warps per work-group tends to
+        // balance occupancy and local synchronization better than WG=128 here.
+        if (h_u32 >= (1u << 18)) {
+            r.wg = static_cast<uint32_t>(std::min<size_t>(64u, std::max<size_t>(1u, max_wg)));
+            r.carry_pairs = 8u;
+        } else if (h_u32 >= (1u << 16)) {
+            r.wg = static_cast<uint32_t>(std::min<size_t>(64u, std::max<size_t>(1u, max_wg)));
+            r.carry_pairs = 16u;
+        } else if (h_u32 >= (1u << 14)) {
+            if (max_wg >= 64u) r.wg = 64u;
+            r.carry_pairs = 32u;
+        } else {
+            r.carry_pairs = 32u;
+        }
     } else if (is_apple) {
         r.profile = "apple-tile";
         if (local_mem_size <= 32768u) r.carry_pairs = (h_u32 >= (1u << 14)) ? 64u : 32u;
