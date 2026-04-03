@@ -58,7 +58,9 @@
 #include <iostream>
 #include <limits>
 #include <string>
+#include <stdexcept>
 #include <vector>
+#include <boost/multiprecision/cpp_int.hpp>
 
 static const uint64_t Z61_p = (uint64_t(1) << 61) - 1;
 static const uint32_t Z31_p = (uint32_t(1) << 31) - 1;
@@ -2994,6 +2996,116 @@ static bool verify_prp_residue_9(const std::vector<GF61_31>& host_z, const std::
     return verify_is_Mp(z_minus_9, digit_width);
 }
 
+
+using boost::multiprecision::cpp_int;
+
+static cpp_int gcd_cppint(cpp_int a, cpp_int b) {
+    while (b != 0) {
+        cpp_int t = a % b;
+        a = b;
+        b = t;
+    }
+    return a;
+}
+
+static cpp_int mod_pow_cppint(cpp_int base, uint64_t exp, const cpp_int& mod) {
+    base %= mod;
+    cpp_int result = 1 % mod;
+    while (exp != 0u) {
+        if (exp & 1u) result = (result * base) % mod;
+        exp >>= 1u;
+        if (exp != 0u) base = (base * base) % mod;
+    }
+    return result;
+}
+
+static std::vector<uint32_t> sieve_primes_upto(uint64_t limit) {
+    if (limit < 2u) return {};
+    if (limit > uint64_t(std::numeric_limits<size_t>::max()) - 1u) {
+        throw std::runtime_error("B1 too large for sieve allocation");
+    }
+    std::vector<uint8_t> composite(static_cast<size_t>(limit) + 1u, 0u);
+    std::vector<uint32_t> primes;
+    for (uint64_t i = 2u; i <= limit; ++i) {
+        if (!composite[static_cast<size_t>(i)]) {
+            primes.push_back(static_cast<uint32_t>(i));
+            if (i <= limit / i) {
+                for (uint64_t j = i * i; j <= limit; j += i) composite[static_cast<size_t>(j)] = 1u;
+            }
+        }
+    }
+    return primes;
+}
+
+static int run_pm1(uint32_t p, uint64_t B1, uint64_t base_seed, uint32_t report_every, double report_seconds) {
+    if (p < 2u) {
+        std::cerr << "p must be >= 2 for p-1\n";
+        return 1;
+    }
+    if (B1 < 2u) {
+        std::cerr << "B1 must be >= 2 for p-1\n";
+        return 1;
+    }
+
+    std::cout << "p=" << p << ", mode=p-1, B1=" << B1 << ", base=" << base_seed << "\n";
+
+    const auto t0 = std::chrono::steady_clock::now();
+    const cpp_int N = (cpp_int(1) << p) - 1;
+    cpp_int a = cpp_int(base_seed) % N;
+    if (a == 0) a = 2;
+
+    const cpp_int trivial_g = gcd_cppint(a, N);
+    if (trivial_g > 1 && trivial_g < N) {
+        std::cout << "2^" << p << " - 1 has a factor: " << trivial_g
+                  << " (P-1 trivial gcd with base " << base_seed << ")\n";
+        return 0;
+    }
+
+    std::vector<uint32_t> primes = sieve_primes_upto(B1);
+    const uint64_t total_primes = static_cast<uint64_t>(primes.size());
+    auto last_report = t0;
+
+    for (uint64_t idx = 0; idx < total_primes; ++idx) {
+        const uint64_t prime = primes[static_cast<size_t>(idx)];
+        uint64_t prime_power = prime;
+        while (prime_power <= B1 / prime) prime_power *= prime;
+        a = mod_pow_cppint(a, prime_power, N);
+
+        const bool by_count = (report_every != 0u) && (((idx + 1u) % report_every) == 0u);
+        const auto now = std::chrono::steady_clock::now();
+        const bool by_time = (report_seconds > 0.0) && (std::chrono::duration<double>(now - last_report).count() >= report_seconds);
+        if (by_count || by_time || (idx + 1u == total_primes)) {
+            const double elapsed = std::chrono::duration<double>(now - t0).count();
+            const double rate = (elapsed > 0.0) ? (double(idx + 1u) / elapsed) : 0.0;
+            const double eta = (rate > 0.0) ? (double(total_primes - (idx + 1u)) / rate) : 0.0;
+            std::cout << "prime " << (idx + 1u) << "/" << total_primes
+                      << " (q=" << prime << ", q^k=" << prime_power << ")"
+                      << ", elapsed " << std::fixed << std::setprecision(2) << elapsed
+                      << " s, prime/s " << std::setprecision(1) << rate;
+            if (idx + 1u < total_primes) {
+                std::cout << ", ETA " << std::setprecision(1) << eta << " s";
+            }
+            std::cout << "\n";
+            last_report = now;
+        }
+    }
+
+    cpp_int g = gcd_cppint(a - 1, N);
+    const auto t1 = std::chrono::steady_clock::now();
+    const double elapsed = std::chrono::duration<double>(t1 - t0).count();
+
+    if (g > 1 && g < N) {
+        std::cout << "2^" << p << " - 1 has a factor: " << g
+                  << " (P-1 stage 1, B1=" << B1 << ")"
+                  << ", elapsed " << std::fixed << std::setprecision(2) << elapsed << " s\n";
+    } else {
+        std::cout << "No factor found by P-1 stage 1 for 2^" << p << " - 1"
+                  << " with B1=" << B1
+                  << ", elapsed " << std::fixed << std::setprecision(2) << elapsed << " s\n";
+    }
+    return 0;
+}
+
 static void check(cl_int err, const char* what) {
     if (err != CL_SUCCESS) {
         std::cerr << what << " failed with error " << err << std::endl;
@@ -3001,7 +3113,7 @@ static void check(cl_int err, const char* what) {
     }
 }
 
-enum class TestMode { LL, PRP };
+enum class TestMode { LL, PRP, PM1 };
 
 static TestMode parse_mode(const char* s) {
     if (s == nullptr) return TestMode::LL;
@@ -3009,7 +3121,8 @@ static TestMode parse_mode(const char* s) {
     for (char& c : m) c = char(std::tolower(static_cast<unsigned char>(c)));
     if (m == "ll") return TestMode::LL;
     if (m == "prp") return TestMode::PRP;
-    std::cerr << "Unknown mode '" << s << "' (expected ll or prp)\n";
+    if (m == "pm1" || m == "p1" || m == "p-1") return TestMode::PM1;
+    std::cerr << "Unknown mode '" << s << "' (expected ll, prp or p-1)\n";
     std::exit(1);
 }
 
@@ -3124,7 +3237,7 @@ static AutoTuneChoice choose_auto_tune(uint32_t h_u32, size_t max_wg, cl_ulong l
 
 int main(int argc, char* argv[]) {
     if (argc < 2) {
-        std::cerr << "Usage: " << argv[0] << " <p> [ll|prp] [report_every] [-d device_id] [-R report_seconds] [-W fft_wg] [-CW carry_wg] [-B carry_pairs] [-LS local_stage_cap] [-N max_iters] [--show-defaults]\n";
+        std::cerr << "Usage: " << argv[0] << " <p> [ll|prp|p-1] [report_every] [-d device_id] [-R report_seconds] [-W fft_wg] [-CW carry_wg] [-B carry_pairs] [-LS local_stage_cap] [-N max_iters] [-B1 pm1_bound] [-A pm1_base] [--show-defaults]\n";
         return 1;
     }
 
@@ -3138,12 +3251,14 @@ int main(int argc, char* argv[]) {
     uint32_t carry_pairs_override = 0u;
     uint32_t local_stage_cap_override = 0u;
     uint32_t max_iters_override = 0u;
+    uint64_t pm1_b1 = 100000u;
+    uint64_t pm1_base = 3u;
     bool show_defaults_only = false;
     bool report_every_set = false;
 
     for (int i = 2; i < argc; ++i) {
         const std::string arg = argv[i];
-        if (arg == "ll" || arg == "prp") {
+        if (arg == "ll" || arg == "prp" || arg == "pm1" || arg == "p1" || arg == "p-1") {
             mode = parse_mode(arg.c_str());
         } else if (arg == "-d") {
             if (i + 1 >= argc) {
@@ -3187,6 +3302,18 @@ int main(int argc, char* argv[]) {
                 return 1;
             }
             max_iters_override = static_cast<uint32_t>(std::strtoul(argv[++i], nullptr, 10));
+        } else if (arg == "-B1") {
+            if (i + 1 >= argc) {
+                std::cerr << "Missing P-1 bound after -B1\n";
+                return 1;
+            }
+            pm1_b1 = std::strtoull(argv[++i], nullptr, 10);
+        } else if (arg == "-A") {
+            if (i + 1 >= argc) {
+                std::cerr << "Missing P-1 base after -A\n";
+                return 1;
+            }
+            pm1_base = std::strtoull(argv[++i], nullptr, 10);
         } else if (arg == "--show-defaults") {
             show_defaults_only = true;
         } else if (!report_every_set) {
@@ -3194,10 +3321,12 @@ int main(int argc, char* argv[]) {
             report_every_set = true;
         } else {
             std::cerr << "Unknown argument: " << arg << "\n";
-            std::cerr << "Usage: " << argv[0] << " <p> [ll|prp] [report_every] [-d device_id] [-R report_seconds] [-W fft_wg] [-CW carry_wg] [-B carry_pairs] [-LS local_stage_cap] [-N max_iters] [--show-defaults]\n";
+            std::cerr << "Usage: " << argv[0] << " <p> [ll|prp|p-1] [report_every] [-d device_id] [-R report_seconds] [-W fft_wg] [-CW carry_wg] [-B carry_pairs] [-LS local_stage_cap] [-N max_iters] [-B1 pm1_bound] [-A pm1_base] [--show-defaults]\n";
             return 1;
         }
     }
+
+    if (mode == TestMode::PM1) return run_pm1(p, pm1_b1, pm1_base, report_every, report_seconds);
 
     const uint8_t ln = transformsize(p);
     const size_t n = size_t(1) << ln;
@@ -3510,40 +3639,32 @@ int main(int argc, char* argv[]) {
         return needed <= static_cast<size_t>(local_mem_size);
     };
     auto stage_can_use_local2_fwd = [&](size_t m_stage) -> bool {
-        if (m_stage < 4 || (m_stage & 3u) != 0u) return false;
-        return stage_can_use_local(m_stage);
+        (void)m_stage;
+        return false;
     };
     auto stage_can_use_local64_fwd = [&](size_t m_stage) -> bool {
-        if (m_stage < 16 || (m_stage & 15u) != 0u) return false;
-        return stage_can_use_local(m_stage);
+        (void)m_stage;
+        return false;
     };
     auto stage_can_use_local256_fwd = [&](size_t m_stage) -> bool {
-        if (m_stage < 64 || (m_stage & 63u) != 0u) return false;
-        if (m_stage == 0 || m_stage > local_stage_cap) return false;
-        const size_t needed = 4u * m_stage * gf_local_bytes + 255u * gf_local_bytes;
-        return needed <= static_cast<size_t>(local_mem_size);
+        (void)m_stage;
+        return false;
     };
     auto stage_can_use_local1024_fwd = [&](size_t m_stage) -> bool {
         (void)m_stage;
         return false;
     };
     auto stage_can_use_local2_bwd = [&](size_t m_stage) -> bool {
-        const size_t ls = 4u * m_stage;
-        if (m_stage == 0 || ls > local_stage_cap) return false;
-        const size_t needed = 16u * m_stage * gf_local_bytes;
-        return needed <= static_cast<size_t>(local_mem_size);
+        (void)m_stage;
+        return false;
     };
     auto stage_can_use_local64_bwd = [&](size_t m_stage) -> bool {
-        const size_t ls = 16u * m_stage;
-        if (m_stage == 0 || ls > local_stage_cap) return false;
-        const size_t needed = 64u * m_stage * gf_local_bytes;
-        return needed <= static_cast<size_t>(local_mem_size);
+        (void)m_stage;
+        return false;
     };
     auto stage_can_use_local256_bwd = [&](size_t m_stage) -> bool {
-        const size_t ls = 64u * m_stage;
-        if (m_stage == 0 || ls > local_stage_cap) return false;
-        const size_t needed = 256u * m_stage * gf_local_bytes + 255u * gf_local_bytes;
-        return needed <= static_cast<size_t>(local_mem_size);
+        (void)m_stage;
+        return false;
     };
     auto stage_can_use_local1024_bwd = [&](size_t m_stage) -> bool {
         (void)m_stage;
@@ -3556,12 +3677,12 @@ int main(int argc, char* argv[]) {
     };
 
     auto use_x4_path = [&](size_t active, size_t m_stage) -> bool {
-        const size_t min_active = is_gfx9 ? (8u * wg) : (4u * wg);
-        return (active >= min_active) && (m_stage >= 4) && (m_stage < 512);
+        (void)active; (void)m_stage;
+        return false;
     };
     auto use_x2_path = [&](size_t active, size_t m_stage) -> bool {
-        const size_t min_active = is_gfx9 ? (4u * wg) : (2u * wg);
-        return (active >= min_active) && (m_stage >= 2) && (m_stage < 128);
+        (void)active; (void)m_stage;
+        return false;
     };
 
     auto can_use_chunk64_0 = [&]() -> bool {
