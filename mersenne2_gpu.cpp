@@ -3987,9 +3987,11 @@ int main(int argc, char* argv[]) {
         }
     }
     // Safety-first: keep the generic scan/phase/drain carry path enabled for all sizes.
-    // The direct block-carry variants can leave an unpropagated carry when an injected
-    // block carry still spills past the end of the destination block, which corrupts
-    // the final residue on some valid Mersenne exponents.
+    // The direct block-carry variants are still faster, but an injected block carry can
+    // survive past the end of a destination block without a guaranteed second-level
+    // propagation, which corrupts the final residue on some valid Mersenne exponents.
+    // Until that path gets its own correctness self-test or a proven repair, leave it off
+    // by default and recover performance only from the FFT-side kernels.
     can_use_direct_block_carry = false;
     std::cout << "carry_blocks=" << nblocks_u32 << ", avg_pairs_per_block=" << std::fixed << std::setprecision(2) << (double(h_u32) / double(nblocks_u32)) << ", carry_target_pairs=" << target_pairs_per_block << ", tuned_wg=" << wg << ", carry_wg=" << carry_wg << ", local_stage_cap=" << ((local_stage_cap_override != 0u) ? std::min<size_t>(max_wg, static_cast<size_t>(local_stage_cap_override)) : std::min<size_t>(max_wg, (is_gfx9 || is_nvidia_dev) ? 256u : 128u)) << ", auto_profile=" << auto_tune.profile;
     if (wg_override != 0u || carry_pairs_override != 0u) std::cout << " (manual override)";
@@ -4106,13 +4108,6 @@ int main(int argc, char* argv[]) {
         const size_t min_active = is_gfx9 ? (4u * wg) : (2u * wg);
         return active >= min_active;
     };
-
-    // T4/Turing-like NVIDIA parts can be faster on very large transforms if the
-    // single forward256/backward256 stage is split into a regular radix-4 stage
-    // followed by the existing local64 stage, instead of using the monolithic
-    // local256 kernel at m=128. Keep this narrowly targeted to the large-warp32
-    // profile to avoid perturbing the already-good AMD path.
-    const bool prefer_split_256_stage_t4 = is_nvidia_t4_like_dev && (wg <= 32u) && (h >= (size_t(1) << 20));
 
     bool chunk64_selftest_ok = false;
     bool forward1024_m256_selftest_ok = true;
@@ -4371,7 +4366,7 @@ int main(int argc, char* argv[]) {
             const size_t active = s * size_t(m_i);
             if (current_m > 256 && can_use_forward_pair_large2(s, size_t(m_i)) && !stage_can_use_local256_fwd(size_t(m_i)) && !stage_can_use_local64_fwd(size_t(m_i))) {
                 const size_t active2 = s * size_t(m_i >> 2);
-                const bool use_w32_pair = is_nvidia_t4_like_dev && wg <= 32u;
+                const bool use_w32_pair = (wg <= 32u) && (is_gfx9 || is_nvidia_dev);
                 const size_t ls = use_w32_pair ? size_t(32) : size_t(64);
                 const size_t gs = round_up(active2, ls);
                 add_planned_kernel(iter_plan, use_w32_pair ? "forward_pair_large2_w32" : "forward_pair_large2", gs, ls, [&](cl_kernel k) {
@@ -4411,8 +4406,7 @@ int main(int argc, char* argv[]) {
                 current_m /= 256;
                 s *= 256;
                 continue;
-            } else if (current_m > 64 && stage_can_use_local256_fwd(size_t(m_i))
-                       && !(prefer_split_256_stage_t4 && current_m == 256 && size_t(m_i) == 128u)) {
+            } else if (current_m > 64 && stage_can_use_local256_fwd(size_t(m_i))) {
                 const size_t gs = active;
                 const size_t ls = size_t(m_i);
                 if (m_i == 64 && max_wg >= 64 && local_mem_size >= (cl_ulong)(256u * gf_local_bytes)) {
@@ -4632,8 +4626,7 @@ int main(int argc, char* argv[]) {
                 back_s /= 256;
                 continue;
             }
-            if (back_s > 64 && stage_can_use_local256_bwd(size_t(m_i))
-                && !(prefer_split_256_stage_t4 && back_s == 4096 && size_t(m_i) == 128u)) {
+            if (back_s > 64 && stage_can_use_local256_bwd(size_t(m_i))) {
                 const size_t gs = active;
                 const size_t ls = 64u * size_t(m_i);
                 const size_t scratch = 256u * size_t(m_i) * gf_local_bytes;
