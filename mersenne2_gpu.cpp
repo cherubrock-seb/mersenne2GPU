@@ -3560,26 +3560,39 @@ static AutoTuneChoice choose_auto_tune(uint32_t h_u32, size_t max_wg, cl_ulong l
     } else if (is_nvidia) {
         const bool nvidia_small_local = (local_mem_size <= 49152u);
         const bool likely_turing_or_smaller = is_nvidia_t4_like || nvidia_small_local;
-        r.profile = likely_turing_or_smaller ? "nvidia-t4-warp32-wideblocks" : "nvidia-warp32-wideblocks";
 
-        // This engine is not a pure FP32 workload: the post-transform carry and many field ops
-        // are sensitive to warp shape, local-memory behavior and integer throughput. On T4/Turing-like
-        // parts, the most reliable default is warp32 with wide carry blocks.
+        // T4/Turing-like parts behave differently depending on transform size:
+        // - mid sizes often like a slightly wider front-end work-group,
+        // - very large transforms are dominated by carry/memory traffic and do better with warp32.
         if (likely_turing_or_smaller) {
-            if (max_wg >= 32u) {
-                r.wg = 32u;
-                r.carry_wg = 32u;
-            } else {
-                r.wg = static_cast<uint32_t>(std::max<size_t>(1u, max_wg));
+            if (h_u32 >= (1u << 20)) {
+                r.profile = "nvidia-t4-large-warp32-wideblocks";
+                r.wg = (max_wg >= 32u) ? 32u : static_cast<uint32_t>(std::max<size_t>(1u, max_wg));
                 r.carry_wg = r.wg;
+                r.carry_pairs = 1024u;
+            } else if (h_u32 >= (1u << 18)) {
+                r.profile = "nvidia-t4-midsize-mixedwg";
+                r.wg = (max_wg >= 64u) ? 64u : (max_wg >= 32u ? 32u : static_cast<uint32_t>(std::max<size_t>(1u, max_wg)));
+                r.carry_wg = (max_wg >= 32u) ? 32u : r.wg;
+                r.carry_pairs = 512u;
+            } else if (h_u32 >= (1u << 16)) {
+                r.profile = "nvidia-t4-small-mixedwg";
+                r.wg = (max_wg >= 64u) ? 64u : (max_wg >= 32u ? 32u : static_cast<uint32_t>(std::max<size_t>(1u, max_wg)));
+                r.carry_wg = (max_wg >= 32u) ? 32u : r.wg;
+                r.carry_pairs = 256u;
+            } else if (h_u32 >= (1u << 14)) {
+                r.profile = "nvidia-t4-small-mixedwg";
+                r.wg = (max_wg >= 64u) ? 64u : (max_wg >= 32u ? 32u : static_cast<uint32_t>(std::max<size_t>(1u, max_wg)));
+                r.carry_wg = (max_wg >= 32u) ? 32u : r.wg;
+                r.carry_pairs = 128u;
+            } else {
+                r.profile = "nvidia-t4-small-mixedwg";
+                r.wg = (max_wg >= 64u) ? 64u : (max_wg >= 32u ? 32u : static_cast<uint32_t>(std::max<size_t>(1u, max_wg)));
+                r.carry_wg = (max_wg >= 32u) ? 32u : r.wg;
+                r.carry_pairs = 64u;
             }
-            if (h_u32 >= (1u << 20)) r.carry_pairs = 1024u;
-            else if (h_u32 >= (1u << 19)) r.carry_pairs = 1024u;
-            else if (h_u32 >= (1u << 18)) r.carry_pairs = 512u;
-            else if (h_u32 >= (1u << 16)) r.carry_pairs = 256u;
-            else if (h_u32 >= (1u << 14)) r.carry_pairs = 128u;
-            else r.carry_pairs = 64u;
         } else {
+            r.profile = "nvidia-warp32-wideblocks";
             r.wg = (max_wg >= 64u) ? 64u : (max_wg >= 32u ? 32u : 16u);
             r.carry_wg = (max_wg >= 32u) ? 32u : r.wg;
             if (h_u32 >= (1u << 20)) r.carry_pairs = 1024u;
