@@ -2287,7 +2287,6 @@ __kernel void block_prepare_direct_kernel(__global GF* restrict z,
 __kernel void block_apply_carry_direct_kernel(__global GF* restrict z,
                                               __global const BlockInfo* restrict blocks,
                                               __global const CarryWord* restrict carry_in,
-                                              __global CarryWord* restrict carry_spill,
                                               __global const uchar* restrict digit_width,
                                               const uint nblocks,
                                               const uint narrow_w,
@@ -2302,24 +2301,18 @@ __kernel void block_apply_carry_direct_kernel(__global GF* restrict z,
     const ulong mask_wide = (mask_narrow << 1) | 1ul;
     uint k = bi.start;
     if (bi.count == 8u) {
-        if (apply_carry_to_pair_direct(z, digit_width2, k + 0u, &c, narrow_w, mask_narrow, mask_wide, small31) != 0u) goto spill_out;
-        if (apply_carry_to_pair_direct(z, digit_width2, k + 1u, &c, narrow_w, mask_narrow, mask_wide, small31) != 0u) goto spill_out;
-        if (apply_carry_to_pair_direct(z, digit_width2, k + 2u, &c, narrow_w, mask_narrow, mask_wide, small31) != 0u) goto spill_out;
-        if (apply_carry_to_pair_direct(z, digit_width2, k + 3u, &c, narrow_w, mask_narrow, mask_wide, small31) != 0u) goto spill_out;
-        if (apply_carry_to_pair_direct(z, digit_width2, k + 4u, &c, narrow_w, mask_narrow, mask_wide, small31) != 0u) goto spill_out;
-        if (apply_carry_to_pair_direct(z, digit_width2, k + 5u, &c, narrow_w, mask_narrow, mask_wide, small31) != 0u) goto spill_out;
-        if (apply_carry_to_pair_direct(z, digit_width2, k + 6u, &c, narrow_w, mask_narrow, mask_wide, small31) != 0u) goto spill_out;
-        if (apply_carry_to_pair_direct(z, digit_width2, k + 7u, &c, narrow_w, mask_narrow, mask_wide, small31) != 0u) goto spill_out;
+        if (apply_carry_to_pair_direct(z, digit_width2, k + 0u, &c, narrow_w, mask_narrow, mask_wide, small31) != 0u) return;
+        if (apply_carry_to_pair_direct(z, digit_width2, k + 1u, &c, narrow_w, mask_narrow, mask_wide, small31) != 0u) return;
+        if (apply_carry_to_pair_direct(z, digit_width2, k + 2u, &c, narrow_w, mask_narrow, mask_wide, small31) != 0u) return;
+        if (apply_carry_to_pair_direct(z, digit_width2, k + 3u, &c, narrow_w, mask_narrow, mask_wide, small31) != 0u) return;
+        if (apply_carry_to_pair_direct(z, digit_width2, k + 4u, &c, narrow_w, mask_narrow, mask_wide, small31) != 0u) return;
+        if (apply_carry_to_pair_direct(z, digit_width2, k + 5u, &c, narrow_w, mask_narrow, mask_wide, small31) != 0u) return;
+        if (apply_carry_to_pair_direct(z, digit_width2, k + 6u, &c, narrow_w, mask_narrow, mask_wide, small31) != 0u) return;
+        if (apply_carry_to_pair_direct(z, digit_width2, k + 7u, &c, narrow_w, mask_narrow, mask_wide, small31) != 0u) return;
     } else {
         for (uint t = 0; t < bi.count; ++t) {
-            if (apply_carry_to_pair_direct(z, digit_width2, k + t, &c, narrow_w, mask_narrow, mask_wide, small31) != 0u) goto spill_out;
+            if (apply_carry_to_pair_direct(z, digit_width2, k + t, &c, narrow_w, mask_narrow, mask_wide, small31) != 0u) return;
         }
-    }
-spill_out:
-    if ((c.lo | c.hi) != 0ul) {
-        uint next = (b + 1u < nblocks) ? (b + 1u) : 0u;
-        carry_spill[next].lo = c.lo;
-        carry_spill[next].hi = c.hi;
     }
 }
 
@@ -3973,12 +3966,11 @@ int main(int argc, char* argv[]) {
         start += count;
     }
     const uint32_t nblocks_u32 = static_cast<uint32_t>(blocks.size());
-    bool can_use_direct_block_carry = (nblocks_u32 > 1u);
+    bool can_use_direct_block_carry = false;
     for (const auto& bi : blocks) {
         if (bi.bits <= 128u) { can_use_direct_block_carry = false; break; }
     }
-    if (h_u32 < (1u << 16)) can_use_direct_block_carry = false;
-    const bool can_use_direct8_mask = false; // direct8 specializations stay disabled until they get the same spill propagation fix
+    const bool can_use_direct8_mask = can_use_direct_block_carry && target_pairs_per_block == 8u && (h_u32 % 8u) == 0u;
     const bool can_use_group_fused_direct8 = can_use_direct8_mask && carry_wg == 64u && (nblocks_u32 % 64u) == 0u;
     const uint32_t ngroups_direct8 = can_use_group_fused_direct8 ? (nblocks_u32 / 64u) : 0u;
     std::vector<uint16_t> block_wide_mask;
@@ -3994,7 +3986,13 @@ int main(int argc, char* argv[]) {
             block_wide_mask[b] = m;
         }
     }
-    // Generic direct block-carry is re-enabled with spill propagation into a drain pass.
+    // Safety-first: keep the generic scan/phase/drain carry path enabled for all sizes.
+    // The direct block-carry variants are still faster, but an injected block carry can
+    // survive past the end of a destination block without a guaranteed second-level
+    // propagation, which corrupts the final residue on some valid Mersenne exponents.
+    // Until that path gets its own correctness self-test or a proven repair, leave it off
+    // by default and recover performance only from the FFT-side kernels.
+    can_use_direct_block_carry = false;
     std::cout << "carry_blocks=" << nblocks_u32 << ", avg_pairs_per_block=" << std::fixed << std::setprecision(2) << (double(h_u32) / double(nblocks_u32)) << ", carry_target_pairs=" << target_pairs_per_block << ", tuned_wg=" << wg << ", carry_wg=" << carry_wg << ", local_stage_cap=" << ((local_stage_cap_override != 0u) ? std::min<size_t>(max_wg, static_cast<size_t>(local_stage_cap_override)) : std::min<size_t>(max_wg, (is_gfx9 || is_nvidia_dev) ? 256u : 128u)) << ", auto_profile=" << auto_tune.profile;
     if (wg_override != 0u || carry_pairs_override != 0u) std::cout << " (manual override)";
     std::cout << "\n";
@@ -4027,7 +4025,6 @@ int main(int argc, char* argv[]) {
     cl_mem Bblk   = clCreateBuffer(C, CL_MEM_READ_ONLY  | CL_MEM_COPY_HOST_PTR, sizeof(BlockInfoHost) * nblocks_u32, blocks.data(), &err); check(err, "buffer blocks");
     cl_mem Bstate = clCreateBuffer(C, CL_MEM_READ_WRITE | CL_MEM_COPY_HOST_PTR, sizeof(BlockStateHost) * nblocks_u32, block_state_init.data(), &err); check(err, "buffer block_state");
     cl_mem Bcin   = clCreateBuffer(C, CL_MEM_READ_WRITE | CL_MEM_COPY_HOST_PTR, sizeof(CarryWordHost) * nblocks_u32, carry_in_init.data(), &err); check(err, "buffer carry_in");
-    cl_mem Bspill = clCreateBuffer(C, CL_MEM_READ_WRITE | CL_MEM_COPY_HOST_PTR, sizeof(CarryWordHost) * nblocks_u32, carry_in_init.data(), &err); check(err, "buffer carry_spill");
     cl_mem Bfinal = clCreateBuffer(C, CL_MEM_READ_WRITE | CL_MEM_COPY_HOST_PTR, sizeof(CarryWordHost), final_carry_init.data(), &err); check(err, "buffer final_carry");
 
     const int n_i = int(n);
@@ -4236,11 +4233,10 @@ int main(int argc, char* argv[]) {
     check(clSetKernelArg(Kbacd, 0, sizeof(cl_mem), &Bz), "set arg block_apply_carry_direct z");
     check(clSetKernelArg(Kbacd, 1, sizeof(cl_mem), &Bblk), "set arg block_apply_carry_direct blocks");
     check(clSetKernelArg(Kbacd, 2, sizeof(cl_mem), &Bcin), "set arg block_apply_carry_direct carry_in");
-    check(clSetKernelArg(Kbacd, 3, sizeof(cl_mem), &Bspill), "set arg block_apply_carry_direct spill");
-    check(clSetKernelArg(Kbacd, 4, sizeof(cl_mem), &Bdw), "set arg block_apply_carry_direct dw");
-    check(clSetKernelArg(Kbacd, 5, sizeof(uint32_t), &nblocks_u32), "set arg block_apply_carry_direct nblocks");
-    check(clSetKernelArg(Kbacd, 6, sizeof(uint32_t), &direct_narrow_w), "set arg block_apply_carry_direct narrow_w");
-    check(clSetKernelArg(Kbacd, 7, sizeof(uint32_t), &direct_small31), "set arg block_apply_carry_direct small31");
+    check(clSetKernelArg(Kbacd, 3, sizeof(cl_mem), &Bdw), "set arg block_apply_carry_direct dw");
+    check(clSetKernelArg(Kbacd, 4, sizeof(uint32_t), &nblocks_u32), "set arg block_apply_carry_direct nblocks");
+    check(clSetKernelArg(Kbacd, 5, sizeof(uint32_t), &direct_narrow_w), "set arg block_apply_carry_direct narrow_w");
+    check(clSetKernelArg(Kbacd, 6, sizeof(uint32_t), &direct_small31), "set arg block_apply_carry_direct small31");
     if (can_use_direct8_mask) {
         check(clSetKernelArg(Kbacd8, 0, sizeof(cl_mem), &Bz), "set arg block_apply_carry_direct8 z");
         check(clSetKernelArg(Kbacd8, 1, sizeof(cl_mem), &Bwm), "set arg block_apply_carry_direct8 mask");
@@ -4513,25 +4509,77 @@ int main(int argc, char* argv[]) {
             }
         }
 
+        const int n4_i = int(h / 2);
         if (current_m == 1) {
-            const int n4_i = int(h / 2);
             const size_t active = h / 2;
-            const size_t gs = round_up(active, wg);
-            add_planned_kernel(iter_plan, "forward2", gs, wg, [&](cl_kernel k) {
-                check(clSetKernelArg(k, 0, sizeof(cl_mem), &Bz), "set arg plan forward2 z");
-                check(clSetKernelArg(k, 1, sizeof(cl_mem), &Bw), "set arg plan forward2 w");
-                check(clSetKernelArg(k, 2, sizeof(int), &n4_i), "set arg plan forward2 n4");
-            }, "enqueue plan forward2");
-            add_existing_step(iter_plan, Ksq, gs, wg, "enqueue plan square_half");
-            add_planned_kernel(iter_plan, "backward2", gs, wg, [&](cl_kernel k) {
-                check(clSetKernelArg(k, 0, sizeof(cl_mem), &Bz), "set arg plan backward2 z");
-                check(clSetKernelArg(k, 1, sizeof(cl_mem), &Bw), "set arg plan backward2 w");
-                check(clSetKernelArg(k, 2, sizeof(int), &n4_i), "set arg plan backward2 n4");
-            }, "enqueue plan backward2");
+            if (active >= 4u * wg) {
+                const size_t gs = round_up((active + 3u) / 4u, wg);
+                add_planned_kernel(iter_plan, "forward2_x4", gs, wg, [&](cl_kernel k) {
+                    check(clSetKernelArg(k, 0, sizeof(cl_mem), &Bz), "set arg plan forward2_x4 z");
+                    check(clSetKernelArg(k, 1, sizeof(cl_mem), &Bw), "set arg plan forward2_x4 w");
+                    check(clSetKernelArg(k, 2, sizeof(int), &n4_i), "set arg plan forward2_x4 n4");
+                }, "enqueue plan forward2_x4");
+                add_planned_kernel(iter_plan, "square_half_x4", gs, wg, [&](cl_kernel k) {
+                    check(clSetKernelArg(k, 0, sizeof(cl_mem), &Bz), "set arg plan square_half_x4 z");
+                    check(clSetKernelArg(k, 1, sizeof(cl_mem), &Bw), "set arg plan square_half_x4 w");
+                    check(clSetKernelArg(k, 2, sizeof(int), &n4_i), "set arg plan square_half_x4 n4");
+                }, "enqueue plan square_half_x4");
+                add_planned_kernel(iter_plan, "backward2_x4", gs, wg, [&](cl_kernel k) {
+                    check(clSetKernelArg(k, 0, sizeof(cl_mem), &Bz), "set arg plan backward2_x4 z");
+                    check(clSetKernelArg(k, 1, sizeof(cl_mem), &Bw), "set arg plan backward2_x4 w");
+                    check(clSetKernelArg(k, 2, sizeof(int), &n4_i), "set arg plan backward2_x4 n4");
+                }, "enqueue plan backward2_x4");
+            } else if (active >= 2u * wg) {
+                const size_t gs = round_up((active + 1u) / 2u, wg);
+                add_planned_kernel(iter_plan, "forward2_x2", gs, wg, [&](cl_kernel k) {
+                    check(clSetKernelArg(k, 0, sizeof(cl_mem), &Bz), "set arg plan forward2_x2 z");
+                    check(clSetKernelArg(k, 1, sizeof(cl_mem), &Bw), "set arg plan forward2_x2 w");
+                    check(clSetKernelArg(k, 2, sizeof(int), &n4_i), "set arg plan forward2_x2 n4");
+                }, "enqueue plan forward2_x2");
+                add_planned_kernel(iter_plan, "square_half_x2", gs, wg, [&](cl_kernel k) {
+                    check(clSetKernelArg(k, 0, sizeof(cl_mem), &Bz), "set arg plan square_half_x2 z");
+                    check(clSetKernelArg(k, 1, sizeof(cl_mem), &Bw), "set arg plan square_half_x2 w");
+                    check(clSetKernelArg(k, 2, sizeof(int), &n4_i), "set arg plan square_half_x2 n4");
+                }, "enqueue plan square_half_x2");
+                add_planned_kernel(iter_plan, "backward2_x2", gs, wg, [&](cl_kernel k) {
+                    check(clSetKernelArg(k, 0, sizeof(cl_mem), &Bz), "set arg plan backward2_x2 z");
+                    check(clSetKernelArg(k, 1, sizeof(cl_mem), &Bw), "set arg plan backward2_x2 w");
+                    check(clSetKernelArg(k, 2, sizeof(int), &n4_i), "set arg plan backward2_x2 n4");
+                }, "enqueue plan backward2_x2");
+            } else {
+                const size_t gs = round_up(active, wg);
+                add_planned_kernel(iter_plan, "forward2", gs, wg, [&](cl_kernel k) {
+                    check(clSetKernelArg(k, 0, sizeof(cl_mem), &Bz), "set arg plan forward2 z");
+                    check(clSetKernelArg(k, 1, sizeof(cl_mem), &Bw), "set arg plan forward2 w");
+                    check(clSetKernelArg(k, 2, sizeof(int), &n4_i), "set arg plan forward2 n4");
+                }, "enqueue plan forward2");
+                add_existing_step(iter_plan, Ksq, gs, wg, "enqueue plan square_half");
+                add_planned_kernel(iter_plan, "backward2", gs, wg, [&](cl_kernel k) {
+                    check(clSetKernelArg(k, 0, sizeof(cl_mem), &Bz), "set arg plan backward2 z");
+                    check(clSetKernelArg(k, 1, sizeof(cl_mem), &Bw), "set arg plan backward2 w");
+                    check(clSetKernelArg(k, 2, sizeof(int), &n4_i), "set arg plan backward2 n4");
+                }, "enqueue plan backward2");
+            }
         } else {
             const size_t active = h / 2;
-            const size_t gs = round_up(active, wg);
-            add_existing_step(iter_plan, Ksq, gs, wg, "enqueue plan square_half");
+            if (active >= 4u * wg) {
+                const size_t gs = round_up((active + 3u) / 4u, wg);
+                add_planned_kernel(iter_plan, "square_half_x4", gs, wg, [&](cl_kernel k) {
+                    check(clSetKernelArg(k, 0, sizeof(cl_mem), &Bz), "set arg plan square_half_x4 z");
+                    check(clSetKernelArg(k, 1, sizeof(cl_mem), &Bw), "set arg plan square_half_x4 w");
+                    check(clSetKernelArg(k, 2, sizeof(int), &n4_i), "set arg plan square_half_x4 n4");
+                }, "enqueue plan square_half_x4");
+            } else if (active >= 2u * wg) {
+                const size_t gs = round_up((active + 1u) / 2u, wg);
+                add_planned_kernel(iter_plan, "square_half_x2", gs, wg, [&](cl_kernel k) {
+                    check(clSetKernelArg(k, 0, sizeof(cl_mem), &Bz), "set arg plan square_half_x2 z");
+                    check(clSetKernelArg(k, 1, sizeof(cl_mem), &Bw), "set arg plan square_half_x2 w");
+                    check(clSetKernelArg(k, 2, sizeof(int), &n4_i), "set arg plan square_half_x2 n4");
+                }, "enqueue plan square_half_x2");
+            } else {
+                const size_t gs = round_up(active, wg);
+                add_existing_step(iter_plan, Ksq, gs, wg, "enqueue plan square_half");
+            }
         }
 
         bool unweighted = false;
@@ -4736,9 +4784,24 @@ int main(int argc, char* argv[]) {
     }
 
     if (can_use_direct_block_carry) {
-        add_existing_step(post_plan, Kbpd, gs_blocks_plan, carry_wg, "enqueue plan block_prepare_direct_kernel");
-        add_existing_step(post_plan, Kbacd, gs_blocks_plan, carry_wg, "enqueue plan block_apply_carry_direct_kernel");
-        add_existing_step(post_plan, Kbcd, gs_serial_plan, 0u, "enqueue plan block_carry_drain_kernel");
+        if (can_use_group_fused_direct8_small31) {
+            if (use_small31_compact_cycle) {
+                add_existing_step(post_plan, Kbpd8fsc, gs_groups_direct8_plan, carry_wg, "enqueue plan block_prepare_direct8_mask_fused64_small31_compact_kernel");
+                add_existing_step(post_plan, Kbagh8sc, gs_groups_direct8_plan, carry_wg, "enqueue plan block_apply_group_head_direct8_mask_small31_compact_kernel");
+            } else {
+                add_existing_step(post_plan, Kbpd8fs, gs_groups_direct8_plan, carry_wg, "enqueue plan block_prepare_direct8_mask_fused64_small31_kernel");
+                add_existing_step(post_plan, Kbagh8s, gs_groups_direct8_plan, carry_wg, "enqueue plan block_apply_group_head_direct8_mask_small31_kernel");
+            }
+        } else if (can_use_group_fused_direct8) {
+            add_existing_step(post_plan, Kbpd8f, gs_groups_direct8_plan, carry_wg, "enqueue plan block_prepare_direct8_mask_fused64_kernel");
+            add_existing_step(post_plan, Kbagh8, gs_groups_direct8_plan, carry_wg, "enqueue plan block_apply_group_head_direct8_mask_kernel");
+        } else if (can_use_direct8_mask) {
+            add_existing_step(post_plan, Kbpd8, gs_blocks_plan, carry_wg, "enqueue plan block_prepare_direct8_mask_kernel");
+            add_existing_step(post_plan, Kbacd8, gs_blocks_plan, carry_wg, "enqueue plan block_apply_carry_direct8_mask_kernel");
+        } else {
+            add_existing_step(post_plan, Kbpd, gs_blocks_plan, carry_wg, "enqueue plan block_prepare_direct_kernel");
+            add_existing_step(post_plan, Kbacd, gs_blocks_plan, carry_wg, "enqueue plan block_apply_carry_direct_kernel");
+        }
     } else {
         add_existing_step(post_plan, Kbp, gs_blocks_plan, carry_wg, "enqueue plan block_prepare_kernel");
         add_existing_step(post_plan, Kbci, gs_blocks_plan, carry_wg, "enqueue plan init_block_carry_kernel");
@@ -4802,10 +4865,6 @@ int main(int argc, char* argv[]) {
         const uint32_t chunk_end = std::min<uint32_t>(total_iters, iter + batch_iters);
         for (; iter < chunk_end; ++iter) {
             enqueue_plan(iter_plan);
-            if (can_use_direct_block_carry) {
-                static const uint64_t zero_carry_words[2] = {0ull, 0ull};
-                check(clEnqueueFillBuffer(Q, Bspill, zero_carry_words, sizeof(zero_carry_words), 0, sizeof(CarryWordHost) * nblocks_u32, 0, nullptr, nullptr), "fill carry_spill");
-            }
             enqueue_plan(post_plan);
 #if MERSENNE2_HAVE_BOOST_CPP_INT
             if (debug_cppint_every != 0u && (debug_cppint_max_iter == 0u || (iter + 1u) <= debug_cppint_max_iter)) {
@@ -4883,7 +4942,6 @@ int main(int argc, char* argv[]) {
     clReleaseMemObject(Bblk);
     clReleaseMemObject(Bstate);
     clReleaseMemObject(Bcin);
-    clReleaseMemObject(Bspill);
     clReleaseMemObject(Bfinal);
 
     for (cl_kernel k : owned_plan_kernels) clReleaseKernel(k);
