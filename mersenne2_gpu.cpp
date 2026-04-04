@@ -3491,26 +3491,31 @@ static AutoTuneChoice choose_auto_tune(uint32_t h_u32, size_t max_wg, cl_ulong l
             else r.carry_pairs = std::min<uint32_t>(256u, std::max<uint32_t>(1u, h_u32));
         }
     } else if (is_nvidia) {
-        r.profile = "nvidia-warp32-splitwg";
-        // Empirical default tuned from Tesla T4-style results:
-        // for medium transforms around 2^18 words, FFT is faster at 64 than 128,
-        // while carry still prefers 64-thread groups and fine carry blocks.
-        // Keep larger jobs on 128 by default unless the device looks like a smaller
-        // 48KB-local-memory NVIDIA part where 64 remains a safer starting point.
         const bool nvidia_small_local = (local_mem_size <= 49152u);
-        // Safer default: keep 64 only in the empirically validated T4 window around h=2^18..2^19.
-        // Smaller sizes and most other cases stay on 128 by default to avoid correctness/launch regressions.
-        if (h_u32 >= (1u << 18) && h_u32 <= (1u << 19) && nvidia_small_local) {
+        const bool likely_turing_or_smaller = nvidia_small_local || compute_units <= 48u || dev_lower.find("tesla t4") != std::string::npos || dev_lower.find("t4") != std::string::npos;
+        r.profile = likely_turing_or_smaller ? "nvidia-warp32-wideblocks" : "nvidia-warp32-large";
+
+        // The old tiny-block heuristic (B=8) is catastrophically slow on large transforms
+        // because it explodes the number of carry blocks. Keep NVIDIA on warp-friendly groups,
+        // but use much wider carry blocks for h >= 2^18.
+        if (likely_turing_or_smaller) {
             r.wg = (max_wg >= 64u) ? 64u : (max_wg >= 32u ? 32u : 16u);
+            r.carry_wg = r.wg;
+            if (h_u32 >= (1u << 20)) r.carry_pairs = 1024u;
+            else if (h_u32 >= (1u << 19)) r.carry_pairs = 512u;
+            else if (h_u32 >= (1u << 18)) r.carry_pairs = 256u;
+            else if (h_u32 >= (1u << 16)) r.carry_pairs = 128u;
+            else if (h_u32 >= (1u << 14)) r.carry_pairs = 64u;
+            else r.carry_pairs = 32u;
         } else {
             r.wg = (max_wg >= 128u) ? 128u : (max_wg >= 64u ? 64u : 32u);
+            r.carry_wg = (max_wg >= 64u) ? 64u : (max_wg >= 32u ? 32u : 16u);
+            if (h_u32 >= (1u << 20)) r.carry_pairs = 512u;
+            else if (h_u32 >= (1u << 18)) r.carry_pairs = 256u;
+            else if (h_u32 >= (1u << 16)) r.carry_pairs = 128u;
+            else if (h_u32 >= (1u << 14)) r.carry_pairs = 64u;
+            else r.carry_pairs = 32u;
         }
-        r.carry_wg = (max_wg >= 64u) ? 64u : (max_wg >= 32u ? 32u : 16u);
-        if (h_u32 >= (1u << 20)) r.carry_pairs = 8u;
-        else if (h_u32 >= (1u << 18)) r.carry_pairs = 8u;
-        else if (h_u32 >= (1u << 16)) r.carry_pairs = 16u;
-        else if (h_u32 >= (1u << 14)) r.carry_pairs = 32u;
-        else r.carry_pairs = 32u;
     } else if (is_apple) {
         r.profile = "apple-tile";
         if (local_mem_size <= 32768u) r.carry_pairs = (h_u32 >= (1u << 14)) ? 64u : 32u;
