@@ -57,10 +57,20 @@
 #include <iomanip>
 #include <iostream>
 #include <limits>
+#include <random>
+#include <sstream>
 #include <string>
-#include <stdexcept>
 #include <vector>
-#include <boost/multiprecision/cpp_int.hpp>
+#if defined(__has_include)
+# if __has_include(<boost/multiprecision/cpp_int.hpp>)
+#  include <boost/multiprecision/cpp_int.hpp>
+#  define MERSENNE2_HAVE_BOOST_CPP_INT 1
+# else
+#  define MERSENNE2_HAVE_BOOST_CPP_INT 0
+# endif
+#else
+# define MERSENNE2_HAVE_BOOST_CPP_INT 0
+#endif
 
 static const uint64_t Z61_p = (uint64_t(1) << 61) - 1;
 static const uint32_t Z31_p = (uint32_t(1) << 31) - 1;
@@ -1178,6 +1188,12 @@ __kernel void forward1024_stage_m256(__global GF* restrict z, __global const ulo
         const int i8 = lid & 3;
         const int base64 = ((q64 >> 4) * m) + (((q64 >> 2) & 3) << 6) + ((q64 & 3) << 4);
         forward4_stage_local(scratch, base64, m8, i8, w, (s << 6) + ((j << 6) + q64), n);
+    }
+    barrier(CLK_LOCAL_MEM_FENCE);
+
+    {
+        const int base256 = ((lid >> 6) * m) + (((lid >> 4) & 3) << 6) + (((lid >> 2) & 3) << 4) + ((lid & 3) << 2);
+        forward4_stage_local(scratch, base256, 1, 0, w, (s << 8) + ((j << 8) + lid), n);
     }
     barrier(CLK_LOCAL_MEM_FENCE);
 
@@ -2996,116 +3012,6 @@ static bool verify_prp_residue_9(const std::vector<GF61_31>& host_z, const std::
     return verify_is_Mp(z_minus_9, digit_width);
 }
 
-
-using boost::multiprecision::cpp_int;
-
-static cpp_int gcd_cppint(cpp_int a, cpp_int b) {
-    while (b != 0) {
-        cpp_int t = a % b;
-        a = b;
-        b = t;
-    }
-    return a;
-}
-
-static cpp_int mod_pow_cppint(cpp_int base, uint64_t exp, const cpp_int& mod) {
-    base %= mod;
-    cpp_int result = 1 % mod;
-    while (exp != 0u) {
-        if (exp & 1u) result = (result * base) % mod;
-        exp >>= 1u;
-        if (exp != 0u) base = (base * base) % mod;
-    }
-    return result;
-}
-
-static std::vector<uint32_t> sieve_primes_upto(uint64_t limit) {
-    if (limit < 2u) return {};
-    if (limit > uint64_t(std::numeric_limits<size_t>::max()) - 1u) {
-        throw std::runtime_error("B1 too large for sieve allocation");
-    }
-    std::vector<uint8_t> composite(static_cast<size_t>(limit) + 1u, 0u);
-    std::vector<uint32_t> primes;
-    for (uint64_t i = 2u; i <= limit; ++i) {
-        if (!composite[static_cast<size_t>(i)]) {
-            primes.push_back(static_cast<uint32_t>(i));
-            if (i <= limit / i) {
-                for (uint64_t j = i * i; j <= limit; j += i) composite[static_cast<size_t>(j)] = 1u;
-            }
-        }
-    }
-    return primes;
-}
-
-static int run_pm1(uint32_t p, uint64_t B1, uint64_t base_seed, uint32_t report_every, double report_seconds) {
-    if (p < 2u) {
-        std::cerr << "p must be >= 2 for p-1\n";
-        return 1;
-    }
-    if (B1 < 2u) {
-        std::cerr << "B1 must be >= 2 for p-1\n";
-        return 1;
-    }
-
-    std::cout << "p=" << p << ", mode=p-1, B1=" << B1 << ", base=" << base_seed << "\n";
-
-    const auto t0 = std::chrono::steady_clock::now();
-    const cpp_int N = (cpp_int(1) << p) - 1;
-    cpp_int a = cpp_int(base_seed) % N;
-    if (a == 0) a = 2;
-
-    const cpp_int trivial_g = gcd_cppint(a, N);
-    if (trivial_g > 1 && trivial_g < N) {
-        std::cout << "2^" << p << " - 1 has a factor: " << trivial_g
-                  << " (P-1 trivial gcd with base " << base_seed << ")\n";
-        return 0;
-    }
-
-    std::vector<uint32_t> primes = sieve_primes_upto(B1);
-    const uint64_t total_primes = static_cast<uint64_t>(primes.size());
-    auto last_report = t0;
-
-    for (uint64_t idx = 0; idx < total_primes; ++idx) {
-        const uint64_t prime = primes[static_cast<size_t>(idx)];
-        uint64_t prime_power = prime;
-        while (prime_power <= B1 / prime) prime_power *= prime;
-        a = mod_pow_cppint(a, prime_power, N);
-
-        const bool by_count = (report_every != 0u) && (((idx + 1u) % report_every) == 0u);
-        const auto now = std::chrono::steady_clock::now();
-        const bool by_time = (report_seconds > 0.0) && (std::chrono::duration<double>(now - last_report).count() >= report_seconds);
-        if (by_count || by_time || (idx + 1u == total_primes)) {
-            const double elapsed = std::chrono::duration<double>(now - t0).count();
-            const double rate = (elapsed > 0.0) ? (double(idx + 1u) / elapsed) : 0.0;
-            const double eta = (rate > 0.0) ? (double(total_primes - (idx + 1u)) / rate) : 0.0;
-            std::cout << "prime " << (idx + 1u) << "/" << total_primes
-                      << " (q=" << prime << ", q^k=" << prime_power << ")"
-                      << ", elapsed " << std::fixed << std::setprecision(2) << elapsed
-                      << " s, prime/s " << std::setprecision(1) << rate;
-            if (idx + 1u < total_primes) {
-                std::cout << ", ETA " << std::setprecision(1) << eta << " s";
-            }
-            std::cout << "\n";
-            last_report = now;
-        }
-    }
-
-    cpp_int g = gcd_cppint(a - 1, N);
-    const auto t1 = std::chrono::steady_clock::now();
-    const double elapsed = std::chrono::duration<double>(t1 - t0).count();
-
-    if (g > 1 && g < N) {
-        std::cout << "2^" << p << " - 1 has a factor: " << g
-                  << " (P-1 stage 1, B1=" << B1 << ")"
-                  << ", elapsed " << std::fixed << std::setprecision(2) << elapsed << " s\n";
-    } else {
-        std::cout << "No factor found by P-1 stage 1 for 2^" << p << " - 1"
-                  << " with B1=" << B1
-                  << ", elapsed " << std::fixed << std::setprecision(2) << elapsed << " s\n";
-    }
-    return 0;
-}
-
 static void check(cl_int err, const char* what) {
     if (err != CL_SUCCESS) {
         std::cerr << what << " failed with error " << err << std::endl;
@@ -3113,7 +3019,374 @@ static void check(cl_int err, const char* what) {
     }
 }
 
-enum class TestMode { LL, PRP, PM1 };
+enum class TestMode { LL, PRP };
+
+#if MERSENNE2_HAVE_BOOST_CPP_INT
+using boost::multiprecision::cpp_int;
+#endif
+
+static GF61_31 host_lshift_weight(const GF61_31& z, const std::vector<IBWeight>& iw, const size_t idx) {
+    return GF61_31(
+        z.g61.lshift(iw[2 * idx].w61, iw[2 * idx + 1].w61),
+        z.g31.lshift(iw[2 * idx].w31, iw[2 * idx + 1].w31)
+    );
+}
+
+static void host_forward4_stage(std::vector<GF61_31>& z, const std::vector<GF61_31>& wv, const size_t s, const size_t m, const size_t n) {
+    std::vector<GF61_31> out = z;
+    for (size_t j = 0; j < s; ++j) {
+        const size_t b = j * (m << 2);
+        for (size_t i = 0; i < m; ++i) {
+            const GF61_31 u0 = z[b + i];
+            const GF61_31 u1 = z[b + m + i].mul(wv[2 * (s + j)]);
+            const GF61_31 u2 = z[b + 2 * m + i].mul(wv[s + j]);
+            const GF61_31 u3 = z[b + 3 * m + i].mul(wv[(n >> 1) + s + j]);
+            const GF61_31 v0 = u0 + u2;
+            const GF61_31 v1 = u1 + u3;
+            const GF61_31 v2 = u0 - u2;
+            const GF61_31 v3 = u1 - u3;
+            out[b + i]         = v0 + v1;
+            out[b + m + i]     = v0 - v1;
+            out[b + 2 * m + i] = v2.addi(v3);
+            out[b + 3 * m + i] = v2.subi(v3);
+        }
+    }
+    z.swap(out);
+}
+
+static void host_emulate_forward64_0_group(std::vector<GF61_31>& z, const std::vector<GF61_31>& wv, const std::vector<IBWeight>& iw, const size_t n, const size_t group_id) {
+    const size_t m0 = n >> 3;
+    const size_t base_i = group_id << 6;
+    std::vector<GF61_31> scratch(256);
+
+    for (size_t lid = 0; lid < 64; ++lid) {
+        const size_t i = base_i + lid;
+        scratch[lid]       = host_lshift_weight(z[i],                 iw, i);
+        scratch[64 + lid]  = host_lshift_weight(z[m0 + i],            iw, m0 + i);
+        scratch[128 + lid] = host_lshift_weight(z[(m0 << 1) + i],     iw, (m0 << 1) + i);
+        scratch[192 + lid] = host_lshift_weight(z[3 * m0 + i],        iw, 3 * m0 + i);
+    }
+
+    {
+        const auto old = scratch;
+        for (size_t lid = 0; lid < 64; ++lid) {
+            const GF61_31 u0 = old[lid];
+            const GF61_31 u1 = old[64 + lid].mul(wv[2]);
+            const GF61_31 u2 = old[128 + lid].mul(wv[1]);
+            const GF61_31 u3 = old[192 + lid].mul(wv[(n >> 1) + 1]);
+            const GF61_31 v0 = u0 + u2;
+            const GF61_31 v1 = u1 + u3;
+            const GF61_31 v2 = u0 - u2;
+            const GF61_31 v3 = u1 - u3;
+            scratch[lid]       = v0 + v1;
+            scratch[64 + lid]  = v0 - v1;
+            scratch[128 + lid] = v2.addi(v3);
+            scratch[192 + lid] = v2.subi(v3);
+        }
+    }
+    {
+        const auto old = scratch;
+        for (size_t lid = 0; lid < 64; ++lid) {
+            const size_t q = lid >> 4;
+            const size_t r = lid & 15u;
+            const size_t base = q << 6;
+            const GF61_31 u0 = old[base + r];
+            const GF61_31 u1 = old[base + 16 + r].mul(wv[2 * (4 + q)]);
+            const GF61_31 u2 = old[base + 32 + r].mul(wv[4 + q]);
+            const GF61_31 u3 = old[base + 48 + r].mul(wv[(n >> 1) + (4 + q)]);
+            const GF61_31 v0 = u0 + u2;
+            const GF61_31 v1 = u1 + u3;
+            const GF61_31 v2 = u0 - u2;
+            const GF61_31 v3 = u1 - u3;
+            scratch[base + r]       = v0 + v1;
+            scratch[base + 16 + r]  = v0 - v1;
+            scratch[base + 32 + r]  = v2.addi(v3);
+            scratch[base + 48 + r]  = v2.subi(v3);
+        }
+    }
+    {
+        const auto old = scratch;
+        for (size_t lid = 0; lid < 64; ++lid) {
+            const size_t q = lid >> 2;
+            const size_t r = lid & 3u;
+            const size_t base = ((q >> 2) << 6) + ((q & 3u) << 4);
+            const GF61_31 u0 = old[base + r];
+            const GF61_31 u1 = old[base + 4 + r].mul(wv[2 * (16 + q)]);
+            const GF61_31 u2 = old[base + 8 + r].mul(wv[16 + q]);
+            const GF61_31 u3 = old[base + 12 + r].mul(wv[(n >> 1) + (16 + q)]);
+            const GF61_31 v0 = u0 + u2;
+            const GF61_31 v1 = u1 + u3;
+            const GF61_31 v2 = u0 - u2;
+            const GF61_31 v3 = u1 - u3;
+            scratch[base + r]      = v0 + v1;
+            scratch[base + 4 + r]  = v0 - v1;
+            scratch[base + 8 + r]  = v2.addi(v3);
+            scratch[base + 12 + r] = v2.subi(v3);
+        }
+    }
+
+    for (size_t lid = 0; lid < 64; ++lid) {
+        const size_t i = base_i + lid;
+        z[i]              = scratch[lid];
+        z[m0 + i]         = scratch[64 + lid];
+        z[(m0 << 1) + i]  = scratch[128 + lid];
+        z[3 * m0 + i]     = scratch[192 + lid];
+    }
+}
+
+static bool host_selftest_chunk64_forward0(const size_t n,
+                                           const std::vector<GF61_31>& wv,
+                                           const std::vector<IBWeight>& iw,
+                                           std::string* why) {
+    const size_t h = n >> 1;
+    if (h < 4096) return true;
+
+    std::mt19937_64 rng(0xC0FFEE123456789ull);
+    auto rand61 = [&]() { return rng() % Z61_p; };
+    auto rand31 = [&]() { return uint32_t(rng() % Z31_p); };
+
+    std::vector<GF61_31> a(h), b(h);
+    for (size_t i = 0; i < h; ++i) {
+        a[i] = GF61_31(GF61(rand61(), rand61()), GF31(rand31(), rand31()));
+        b[i] = a[i];
+    }
+
+    for (size_t i = 0; i < h; ++i) a[i] = host_lshift_weight(a[i], iw, i);
+    host_forward4_stage(a, wv, 1, n >> 3, n);
+    host_forward4_stage(a, wv, 4, n >> 5, n);
+    host_forward4_stage(a, wv, 16, n >> 7, n);
+
+    host_emulate_forward64_0_group(b, wv, iw, n, 0);
+
+    const size_t m0 = n >> 3;
+    for (size_t lid = 0; lid < 64; ++lid) {
+        const size_t idx0 = lid;
+        const size_t idx1 = m0 + lid;
+        const size_t idx2 = (m0 << 1) + lid;
+        const size_t idx3 = 3 * m0 + lid;
+        if (!((a[idx0].g61.s0() == b[idx0].g61.s0() && a[idx0].g61.s1() == b[idx0].g61.s1() && a[idx0].g31.s0() == b[idx0].g31.s0() && a[idx0].g31.s1() == b[idx0].g31.s1()) && (a[idx1].g61.s0() == b[idx1].g61.s0() && a[idx1].g61.s1() == b[idx1].g61.s1() && a[idx1].g31.s0() == b[idx1].g31.s0() && a[idx1].g31.s1() == b[idx1].g31.s1()) && (a[idx2].g61.s0() == b[idx2].g61.s0() && a[idx2].g61.s1() == b[idx2].g61.s1() && a[idx2].g31.s0() == b[idx2].g31.s0() && a[idx2].g31.s1() == b[idx2].g31.s1()) && (a[idx3].g61.s0() == b[idx3].g61.s0() && a[idx3].g61.s1() == b[idx3].g61.s1() && a[idx3].g31.s0() == b[idx3].g31.s0() && a[idx3].g31.s1() == b[idx3].g31.s1()))) {
+            if (why != nullptr) {
+                std::ostringstream oss;
+                oss << "chunk64 forward fusion mismatches the generic radix-4 chain on host emulation at group 0, lane " << lid;
+                *why = oss.str();
+            }
+            return false;
+        }
+    }
+    return true;
+}
+
+
+static void host_emulate_forward1024_stage_m256_group(std::vector<GF61_31>& z, const std::vector<GF61_31>& wv, const size_t s, const size_t n, const size_t group_id) {
+    const size_t m = 256;
+    const size_t b = group_id * (m << 2);
+    std::vector<GF61_31> scratch(1024);
+    for (size_t lid = 0; lid < 256; ++lid) {
+        scratch[lid]       = z[b + lid];
+        scratch[m + lid]   = z[b + m + lid];
+        scratch[2*m + lid] = z[b + 2*m + lid];
+        scratch[3*m + lid] = z[b + 3*m + lid];
+    }
+    {
+        const auto old = scratch;
+        for (size_t lid = 0; lid < 256; ++lid) {
+            const GF61_31 u0 = old[lid];
+            const GF61_31 u1 = old[m + lid].mul(wv[2 * (s + group_id)]);
+            const GF61_31 u2 = old[2 * m + lid].mul(wv[s + group_id]);
+            const GF61_31 u3 = old[3 * m + lid].mul(wv[(n >> 1) + s + group_id]);
+            const GF61_31 v0 = u0 + u2;
+            const GF61_31 v1 = u1 + u3;
+            const GF61_31 v2 = u0 - u2;
+            const GF61_31 v3 = u1 - u3;
+            scratch[lid]       = v0 + v1;
+            scratch[m + lid]   = v0 - v1;
+            scratch[2*m + lid] = v2.addi(v3);
+            scratch[3*m + lid] = v2.subi(v3);
+        }
+    }
+    {
+        const auto old = scratch;
+        for (size_t lid = 0; lid < 256; ++lid) {
+            const size_t q4 = lid >> 6;
+            const size_t i2 = lid & 63u;
+            const size_t base4 = q4 * m;
+            const GF61_31 u0 = old[base4 + i2];
+            const GF61_31 u1 = old[base4 + 64 + i2].mul(wv[2 * ((s << 2) + ((group_id << 2) + q4))]);
+            const GF61_31 u2 = old[base4 + 128 + i2].mul(wv[(s << 2) + ((group_id << 2) + q4)]);
+            const GF61_31 u3 = old[base4 + 192 + i2].mul(wv[(n >> 1) + ((s << 2) + ((group_id << 2) + q4))]);
+            const GF61_31 v0 = u0 + u2;
+            const GF61_31 v1 = u1 + u3;
+            const GF61_31 v2 = u0 - u2;
+            const GF61_31 v3 = u1 - u3;
+            scratch[base4 + i2]       = v0 + v1;
+            scratch[base4 + 64 + i2]  = v0 - v1;
+            scratch[base4 + 128 + i2] = v2.addi(v3);
+            scratch[base4 + 192 + i2] = v2.subi(v3);
+        }
+    }
+    {
+        const auto old = scratch;
+        for (size_t lid = 0; lid < 256; ++lid) {
+            const size_t q16 = lid >> 4;
+            const size_t i4 = lid & 15u;
+            const size_t base16 = ((q16 >> 2) * m) + ((q16 & 3u) << 6);
+            const size_t tw = (s << 4) + ((group_id << 4) + q16);
+            const GF61_31 u0 = old[base16 + i4];
+            const GF61_31 u1 = old[base16 + 16 + i4].mul(wv[2 * tw]);
+            const GF61_31 u2 = old[base16 + 32 + i4].mul(wv[tw]);
+            const GF61_31 u3 = old[base16 + 48 + i4].mul(wv[(n >> 1) + tw]);
+            const GF61_31 v0 = u0 + u2;
+            const GF61_31 v1 = u1 + u3;
+            const GF61_31 v2 = u0 - u2;
+            const GF61_31 v3 = u1 - u3;
+            scratch[base16 + i4]      = v0 + v1;
+            scratch[base16 + 16 + i4] = v0 - v1;
+            scratch[base16 + 32 + i4] = v2.addi(v3);
+            scratch[base16 + 48 + i4] = v2.subi(v3);
+        }
+    }
+    {
+        const auto old = scratch;
+        for (size_t lid = 0; lid < 256; ++lid) {
+            const size_t q64 = lid >> 2;
+            const size_t i8 = lid & 3u;
+            const size_t base64 = ((q64 >> 4) * m) + (((q64 >> 2) & 3u) << 6) + ((q64 & 3u) << 4);
+            const size_t tw = (s << 6) + ((group_id << 6) + q64);
+            const GF61_31 u0 = old[base64 + i8];
+            const GF61_31 u1 = old[base64 + 4 + i8].mul(wv[2 * tw]);
+            const GF61_31 u2 = old[base64 + 8 + i8].mul(wv[tw]);
+            const GF61_31 u3 = old[base64 + 12 + i8].mul(wv[(n >> 1) + tw]);
+            const GF61_31 v0 = u0 + u2;
+            const GF61_31 v1 = u1 + u3;
+            const GF61_31 v2 = u0 - u2;
+            const GF61_31 v3 = u1 - u3;
+            scratch[base64 + i8]      = v0 + v1;
+            scratch[base64 + 4 + i8]  = v0 - v1;
+            scratch[base64 + 8 + i8]  = v2.addi(v3);
+            scratch[base64 + 12 + i8] = v2.subi(v3);
+        }
+    }
+    {
+        const auto old = scratch;
+        for (size_t lid = 0; lid < 256; ++lid) {
+            const size_t base256 = ((lid >> 6) * m) + (((lid >> 4) & 3u) << 6) + (((lid >> 2) & 3u) << 4) + ((lid & 3u) << 2);
+            const size_t tw = (s << 8) + ((group_id << 8) + lid);
+            const GF61_31 u0 = old[base256 + 0];
+            const GF61_31 u1 = old[base256 + 1].mul(wv[2 * tw]);
+            const GF61_31 u2 = old[base256 + 2].mul(wv[tw]);
+            const GF61_31 u3 = old[base256 + 3].mul(wv[(n >> 1) + tw]);
+            const GF61_31 v0 = u0 + u2;
+            const GF61_31 v1 = u1 + u3;
+            const GF61_31 v2 = u0 - u2;
+            const GF61_31 v3 = u1 - u3;
+            scratch[base256 + 0] = v0 + v1;
+            scratch[base256 + 1] = v0 - v1;
+            scratch[base256 + 2] = v2.addi(v3);
+            scratch[base256 + 3] = v2.subi(v3);
+        }
+    }
+    for (size_t lid = 0; lid < 256; ++lid) {
+        z[b + lid]       = scratch[lid];
+        z[b + m + lid]   = scratch[m + lid];
+        z[b + 2*m + lid] = scratch[2*m + lid];
+        z[b + 3*m + lid] = scratch[3*m + lid];
+    }
+}
+
+static bool host_selftest_forward1024_stage_m256(const size_t n,
+                                                 const std::vector<GF61_31>& wv,
+                                                 std::string* why) {
+    const size_t h = n >> 1;
+    if (h < 4096) return true;
+    const size_t s = n >> 11;
+    if (s == 0) return true;
+
+    std::mt19937_64 rng(0x1024BAD5EEDull);
+    auto rand61 = [&]() { return rng() % Z61_p; };
+    auto rand31 = [&]() { return uint32_t(rng() % Z31_p); };
+
+    std::vector<GF61_31> a(h), b(h);
+    for (size_t i = 0; i < h; ++i) {
+        a[i] = GF61_31(GF61(rand61(), rand61()), GF31(rand31(), rand31()));
+        b[i] = a[i];
+    }
+
+    host_forward4_stage(a, wv, s, 256, n);
+    host_forward4_stage(a, wv, s << 2, 64, n);
+    host_forward4_stage(a, wv, s << 4, 16, n);
+    host_forward4_stage(a, wv, s << 6, 4, n);
+    host_forward4_stage(a, wv, s << 8, 1, n);
+
+    host_emulate_forward1024_stage_m256_group(b, wv, s, n, 0);
+
+    for (size_t i = 0; i < 1024; ++i) {
+        if (!(a[i].g61.s0() == b[i].g61.s0() && a[i].g61.s1() == b[i].g61.s1() &&
+              a[i].g31.s0() == b[i].g31.s0() && a[i].g31.s1() == b[i].g31.s1())) {
+            if (why != nullptr) {
+                std::ostringstream oss;
+                oss << "forward1024_stage_m256 mismatches the generic radix-4 chain on host emulation at local index " << i;
+                *why = oss.str();
+            }
+            return false;
+        }
+    }
+    return true;
+}
+
+#if MERSENNE2_HAVE_BOOST_CPP_INT
+static cpp_int reconstruct_value_from_digits(const std::vector<GF61_31>& host_z, const std::vector<uint8_t>& digit_width) {
+    cpp_int x = 0;
+    size_t bitpos = 0;
+    for (size_t k = 0; k < host_z.size(); ++k) {
+        x += (cpp_int(host_z[k].g61.s0()) << bitpos);
+        bitpos += digit_width[2 * k];
+        x += (cpp_int(host_z[k].g61.s1()) << bitpos);
+        bitpos += digit_width[2 * k + 1];
+    }
+    return x;
+}
+
+static cpp_int mersenne_mod(cpp_int x, const uint32_t p) {
+    const cpp_int M = (cpp_int(1) << p) - 1;
+    while ((x >> p) != 0) x = (x & M) + (x >> p);
+    if (x == M) return 0;
+    if (x > M) {
+        while (x > M) x = (x & M) + (x >> p);
+        if (x == M) return 0;
+    }
+    return x;
+}
+
+static cpp_int mersenne_step_ref(const cpp_int& x, const uint32_t p, const TestMode mode) {
+    const cpp_int M = (cpp_int(1) << p) - 1;
+    cpp_int y = mersenne_mod(x * x, p);
+    if (mode == TestMode::LL) {
+        if (y >= 2) y -= 2;
+        else y = y + M - 2;
+        y = mersenne_mod(y, p);
+    }
+    return y;
+}
+
+static std::string cpp_int_hex_preview(const cpp_int& x, const size_t max_hex = 32) {
+    if (x == 0) return "0";
+    cpp_int t = x;
+    std::string s;
+    const char* digits = "0123456789ABCDEF";
+    while (t != 0) {
+        unsigned d = unsigned((t & 0xFu).convert_to<unsigned>());
+        s.push_back(digits[d]);
+        t >>= 4;
+    }
+    std::reverse(s.begin(), s.end());
+    if (s.size() > max_hex) return s.substr(0, max_hex) + "...";
+    return s;
+}
+#else
+static std::string exact_debug_backend_name() { return "disabled (boost::multiprecision::cpp_int header not found at compile time)"; }
+#endif
+
+
 
 static TestMode parse_mode(const char* s) {
     if (s == nullptr) return TestMode::LL;
@@ -3121,8 +3394,7 @@ static TestMode parse_mode(const char* s) {
     for (char& c : m) c = char(std::tolower(static_cast<unsigned char>(c)));
     if (m == "ll") return TestMode::LL;
     if (m == "prp") return TestMode::PRP;
-    if (m == "pm1" || m == "p1" || m == "p-1") return TestMode::PM1;
-    std::cerr << "Unknown mode '" << s << "' (expected ll, prp or p-1)\n";
+    std::cerr << "Unknown mode '" << s << "' (expected ll or prp)\n";
     std::exit(1);
 }
 
@@ -3237,7 +3509,7 @@ static AutoTuneChoice choose_auto_tune(uint32_t h_u32, size_t max_wg, cl_ulong l
 
 int main(int argc, char* argv[]) {
     if (argc < 2) {
-        std::cerr << "Usage: " << argv[0] << " <p> [ll|prp|p-1] [report_every] [-d device_id] [-R report_seconds] [-W fft_wg] [-CW carry_wg] [-B carry_pairs] [-LS local_stage_cap] [-N max_iters] [-B1 pm1_bound] [-A pm1_base] [--show-defaults]\n";
+        std::cerr << "Usage: " << argv[0] << " <p> [ll|prp] [report_every] [-d device_id] [-R report_seconds] [-W fft_wg] [-CW carry_wg] [-B carry_pairs] [-LS local_stage_cap] [-N max_iters] [--show-defaults] [--enable-chunk64] [--debug-plan] [--debug-stage-selftest] [--debug-cppint-every N] [--debug-cppint-max-iter N]\n";
         return 1;
     }
 
@@ -3251,14 +3523,17 @@ int main(int argc, char* argv[]) {
     uint32_t carry_pairs_override = 0u;
     uint32_t local_stage_cap_override = 0u;
     uint32_t max_iters_override = 0u;
-    uint64_t pm1_b1 = 100000u;
-    uint64_t pm1_base = 3u;
     bool show_defaults_only = false;
     bool report_every_set = false;
+    bool debug_plan = false;
+    bool debug_stage_selftest = false;
+    bool enable_chunk64 = false;
+    uint32_t debug_cppint_every = 0u;
+    uint32_t debug_cppint_max_iter = 0u;
 
     for (int i = 2; i < argc; ++i) {
         const std::string arg = argv[i];
-        if (arg == "ll" || arg == "prp" || arg == "pm1" || arg == "p1" || arg == "p-1") {
+        if (arg == "ll" || arg == "prp") {
             mode = parse_mode(arg.c_str());
         } else if (arg == "-d") {
             if (i + 1 >= argc) {
@@ -3302,31 +3577,44 @@ int main(int argc, char* argv[]) {
                 return 1;
             }
             max_iters_override = static_cast<uint32_t>(std::strtoul(argv[++i], nullptr, 10));
-        } else if (arg == "-B1") {
-            if (i + 1 >= argc) {
-                std::cerr << "Missing P-1 bound after -B1\n";
-                return 1;
-            }
-            pm1_b1 = std::strtoull(argv[++i], nullptr, 10);
-        } else if (arg == "-A") {
-            if (i + 1 >= argc) {
-                std::cerr << "Missing P-1 base after -A\n";
-                return 1;
-            }
-            pm1_base = std::strtoull(argv[++i], nullptr, 10);
         } else if (arg == "--show-defaults") {
             show_defaults_only = true;
+        } else if (arg == "--debug-plan") {
+            debug_plan = true;
+        } else if (arg == "--debug-stage-selftest") {
+            debug_stage_selftest = true;
+        } else if (arg == "--enable-chunk64") {
+            enable_chunk64 = true;
+        } else if (arg == "--debug-cppint-every") {
+            if (i + 1 >= argc) {
+                std::cerr << "Missing value after --debug-cppint-every\n";
+                return 1;
+            }
+            debug_cppint_every = static_cast<uint32_t>(std::strtoul(argv[++i], nullptr, 10));
+        } else if (arg == "--debug-cppint-max-iter") {
+            if (i + 1 >= argc) {
+                std::cerr << "Missing value after --debug-cppint-max-iter\n";
+                return 1;
+            }
+            debug_cppint_max_iter = static_cast<uint32_t>(std::strtoul(argv[++i], nullptr, 10));
         } else if (!report_every_set) {
             report_every = static_cast<uint32_t>(std::strtoul(arg.c_str(), nullptr, 10));
             report_every_set = true;
         } else {
             std::cerr << "Unknown argument: " << arg << "\n";
-            std::cerr << "Usage: " << argv[0] << " <p> [ll|prp|p-1] [report_every] [-d device_id] [-R report_seconds] [-W fft_wg] [-CW carry_wg] [-B carry_pairs] [-LS local_stage_cap] [-N max_iters] [-B1 pm1_bound] [-A pm1_base] [--show-defaults]\n";
+            std::cerr << "Usage: " << argv[0] << " <p> [ll|prp] [report_every] [-d device_id] [-R report_seconds] [-W fft_wg] [-CW carry_wg] [-B carry_pairs] [-LS local_stage_cap] [-N max_iters] [--show-defaults] [--enable-chunk64] [--debug-plan] [--debug-stage-selftest] [--debug-cppint-every N] [--debug-cppint-max-iter N]\n";
             return 1;
         }
     }
 
-    if (mode == TestMode::PM1) return run_pm1(p, pm1_b1, pm1_base, report_every, report_seconds);
+#if !MERSENNE2_HAVE_BOOST_CPP_INT
+    if (debug_cppint_every != 0u || debug_cppint_max_iter != 0u) {
+        std::cout << "debug_cppint_backend=" << exact_debug_backend_name() << "\n";
+        std::cout << "debug_cppint disabled at runtime; build with Boost headers installed to enable exact bigint checks\n";
+        debug_cppint_every = 0u;
+        debug_cppint_max_iter = 0u;
+    }
+#endif
 
     const uint8_t ln = transformsize(p);
     const size_t n = size_t(1) << ln;
@@ -3526,7 +3814,7 @@ int main(int argc, char* argv[]) {
     uint32_t o = 0;
     for (size_t j = 0; j <= n; ++j) {
         uint64_t qj = uint64_t(p) * uint64_t(j);
-        uint32_t ceil_qj_n = uint32_t(((qj - 1) >> ln) + 1);
+        uint32_t ceil_qj_n = (j == 0) ? 0u : uint32_t(((qj - 1) >> ln) + 1u);
         if (j > 0) {
             uint8_t c = uint8_t(ceil_qj_n - o);
             if ((c != q_n) && (c != q_n + 1)) {
@@ -3568,7 +3856,7 @@ int main(int argc, char* argv[]) {
         start += count;
     }
     const uint32_t nblocks_u32 = static_cast<uint32_t>(blocks.size());
-    bool can_use_direct_block_carry = (nblocks_u32 > 1u);
+    bool can_use_direct_block_carry = false;
     for (const auto& bi : blocks) {
         if (bi.bits <= 128u) { can_use_direct_block_carry = false; break; }
     }
@@ -3588,10 +3876,11 @@ int main(int argc, char* argv[]) {
             block_wide_mask[b] = m;
         }
     }
-    // Conservative safety gate: the direct block-carry fast path is only enabled on
-    // very large transforms where it has been performance-tested. Smaller cases use
-    // the generic scan/drain path to preserve correctness.
-    if (h_u32 < (1u << 16)) can_use_direct_block_carry = false;
+    // Safety-first: keep the generic scan/phase/drain carry path enabled for all sizes.
+    // The direct block-carry variants can leave an unpropagated carry when an injected
+    // block carry still spills past the end of the destination block, which corrupts
+    // the final residue on some valid Mersenne exponents.
+    can_use_direct_block_carry = false;
     std::cout << "carry_blocks=" << nblocks_u32 << ", avg_pairs_per_block=" << std::fixed << std::setprecision(2) << (double(h_u32) / double(nblocks_u32)) << ", carry_target_pairs=" << target_pairs_per_block << ", tuned_wg=" << wg << ", carry_wg=" << carry_wg << ", local_stage_cap=" << ((local_stage_cap_override != 0u) ? std::min<size_t>(max_wg, static_cast<size_t>(local_stage_cap_override)) : std::min<size_t>(max_wg, (is_gfx9 || is_nvidia_dev) ? 256u : 128u)) << ", auto_profile=" << auto_tune.profile;
     if (wg_override != 0u || carry_pairs_override != 0u) std::cout << " (manual override)";
     std::cout << "\n";
@@ -3639,54 +3928,88 @@ int main(int argc, char* argv[]) {
         return needed <= static_cast<size_t>(local_mem_size);
     };
     auto stage_can_use_local2_fwd = [&](size_t m_stage) -> bool {
-        (void)m_stage;
-        return false;
+        if (m_stage < 4 || (m_stage & 3u) != 0u) return false;
+        return stage_can_use_local(m_stage);
     };
     auto stage_can_use_local64_fwd = [&](size_t m_stage) -> bool {
-        (void)m_stage;
-        return false;
+        if (m_stage < 16 || (m_stage & 15u) != 0u) return false;
+        return stage_can_use_local(m_stage);
     };
     auto stage_can_use_local256_fwd = [&](size_t m_stage) -> bool {
-        (void)m_stage;
-        return false;
+        if (m_stage < 64 || (m_stage & 63u) != 0u) return false;
+        if (m_stage == 0 || m_stage > local_stage_cap) return false;
+        const size_t needed = 4u * m_stage * gf_local_bytes + 255u * gf_local_bytes;
+        return needed <= static_cast<size_t>(local_mem_size);
     };
     auto stage_can_use_local1024_fwd = [&](size_t m_stage) -> bool {
-        (void)m_stage;
-        return false;
+        if (m_stage < 256 || (m_stage & 255u) != 0u) return false;
+        return stage_can_use_local(m_stage);
     };
     auto stage_can_use_local2_bwd = [&](size_t m_stage) -> bool {
-        (void)m_stage;
-        return false;
+        const size_t ls = 4u * m_stage;
+        if (m_stage == 0 || ls > local_stage_cap) return false;
+        const size_t needed = 16u * m_stage * gf_local_bytes;
+        return needed <= static_cast<size_t>(local_mem_size);
     };
     auto stage_can_use_local64_bwd = [&](size_t m_stage) -> bool {
-        (void)m_stage;
-        return false;
+        const size_t ls = 16u * m_stage;
+        if (m_stage == 0 || ls > local_stage_cap) return false;
+        const size_t needed = 64u * m_stage * gf_local_bytes;
+        return needed <= static_cast<size_t>(local_mem_size);
     };
     auto stage_can_use_local256_bwd = [&](size_t m_stage) -> bool {
-        (void)m_stage;
-        return false;
+        const size_t ls = 64u * m_stage;
+        if (m_stage == 0 || ls > local_stage_cap) return false;
+        const size_t needed = 256u * m_stage * gf_local_bytes + 255u * gf_local_bytes;
+        return needed <= static_cast<size_t>(local_mem_size);
     };
     auto stage_can_use_local1024_bwd = [&](size_t m_stage) -> bool {
-        (void)m_stage;
-        return false;
+        const size_t ls = 256u * m_stage;
+        if (m_stage == 0 || ls > local_stage_cap) return false;
+        const size_t needed = 1024u * m_stage * gf_local_bytes;
+        return needed <= static_cast<size_t>(local_mem_size);
     };
 
     auto can_use_forward_pair_large2 = [&](size_t s_stage, size_t m_stage) -> bool {
-        (void)s_stage; (void)m_stage;
+        if (m_stage < 1024 || (m_stage & 3u) != 0u) return false;
+        if (is_gfx9) return s_stage >= 64u;
+        if (is_nvidia_dev) {
+            if (max_wg < 64 || local_mem_size < (cl_ulong)(16u * gf_local_bytes)) return false;
+            return s_stage >= 32u;
+        }
         return false;
     };
 
     auto use_x4_path = [&](size_t active, size_t m_stage) -> bool {
-        (void)active; (void)m_stage;
-        return false;
+        const size_t min_active = is_gfx9 ? (8u * wg) : (4u * wg);
+        return (active >= min_active) && (m_stage >= 4) && (m_stage < 512);
     };
     auto use_x2_path = [&](size_t active, size_t m_stage) -> bool {
-        (void)active; (void)m_stage;
-        return false;
+        const size_t min_active = is_gfx9 ? (4u * wg) : (2u * wg);
+        return (active >= min_active) && (m_stage >= 2) && (m_stage < 128);
     };
 
+    bool chunk64_selftest_ok = false;
+    bool forward1024_m256_selftest_ok = true;
+    if ((enable_chunk64 || debug_stage_selftest) && h >= 4096) {
+        std::string chunk64_why;
+        chunk64_selftest_ok = host_selftest_chunk64_forward0(n, wv, w_ib, &chunk64_why);
+        std::cout << "chunk64_selftest=" << (chunk64_selftest_ok ? "PASS" : "FAIL");
+        if (!chunk64_why.empty()) std::cout << " (" << chunk64_why << ")";
+        std::cout << "\n";
+        if (enable_chunk64 && !chunk64_selftest_ok) {
+            std::cout << "chunk64 path disabled because the host self-test failed\n";
+        }
+    }
+    if (debug_stage_selftest && h >= 4096) {
+        std::string why1024;
+        forward1024_m256_selftest_ok = host_selftest_forward1024_stage_m256(n, wv, &why1024);
+        std::cout << "forward1024_m256_selftest=" << (forward1024_m256_selftest_ok ? "PASS" : "FAIL");
+        if (!why1024.empty()) std::cout << " (" << why1024 << ")";
+        std::cout << "\n";
+    }
     auto can_use_chunk64_0 = [&]() -> bool {
-        return false;
+        return enable_chunk64 && chunk64_selftest_ok && (h >= 4096) && (max_wg >= 64);
     };
 
     check(clSetKernelArg(Kw, 0, sizeof(cl_mem), &Bz), "set arg weight z");
@@ -3936,7 +4259,7 @@ int main(int argc, char* argv[]) {
                 s *= 16;
                 continue;
             } else if (current_m > 256 && stage_can_use_local1024_fwd(size_t(m_i))) {
-                if (m_i == 256 && max_wg >= 256 && local_mem_size >= (cl_ulong)(1024u * gf_local_bytes)) {
+                if (m_i == 256 && forward1024_m256_selftest_ok && max_wg >= 256 && local_mem_size >= (cl_ulong)(1024u * gf_local_bytes)) {
                     const size_t gs256 = round_up(s, size_t(1)) * 256u;
                     const size_t ls256 = 256u;
                     add_planned_kernel(iter_plan, "forward1024_stage_m256", gs256, ls256, [&](cl_kernel k) {
@@ -4348,6 +4671,17 @@ int main(int argc, char* argv[]) {
     }
     if (mode == TestMode::LL) add_existing_step(post_plan, Ksub, gs_serial_plan, 0u, "enqueue plan sub_kernel");
 
+    if (debug_plan) {
+        std::cout << "iter_plan_steps=" << iter_plan.size() << "\n";
+        for (size_t k = 0; k < iter_plan.size(); ++k) {
+            std::cout << "  [" << k << "] " << iter_plan[k].label << " gs=" << iter_plan[k].gs << " ls=" << iter_plan[k].ls << "\n";
+        }
+        std::cout << "post_plan_steps=" << post_plan.size() << "\n";
+        for (size_t k = 0; k < post_plan.size(); ++k) {
+            std::cout << "  [" << k << "] " << post_plan[k].label << " gs=" << post_plan[k].gs << " ls=" << post_plan[k].ls << "\n";
+        }
+    }
+
     auto t0 = std::chrono::steady_clock::now();
     auto last_report_clock = t0;
     uint32_t total_iters = (mode == TestMode::LL) ? ((p >= 2) ? (p - 2) : 0u) : p;
@@ -4373,7 +4707,12 @@ int main(int argc, char* argv[]) {
         last_report_clock = now;
     };
 
-    const uint32_t batch_iters = std::max<uint32_t>(1u, report_every != 0u ? report_every : 1000u);
+    uint32_t batch_iters = std::max<uint32_t>(1u, report_every != 0u ? report_every : 1000u);
+    if (debug_cppint_every != 0u) batch_iters = std::min<uint32_t>(batch_iters, std::max<uint32_t>(1u, debug_cppint_every));
+    if (debug_cppint_max_iter != 0u) batch_iters = std::min<uint32_t>(batch_iters, std::max<uint32_t>(1u, debug_cppint_max_iter));
+#if MERSENNE2_HAVE_BOOST_CPP_INT
+    cpp_int debug_ref_state = (mode == TestMode::LL) ? cpp_int(4) : cpp_int(3);
+#endif
     if (max_iters_override != 0u) std::cout << "benchmark_iters=" << total_iters << "\n";
     maybe_report(0u, true);
     uint32_t iter = 0u;
@@ -4382,7 +4721,41 @@ int main(int argc, char* argv[]) {
         for (; iter < chunk_end; ++iter) {
             enqueue_plan(iter_plan);
             enqueue_plan(post_plan);
+#if MERSENNE2_HAVE_BOOST_CPP_INT
+            if (debug_cppint_every != 0u && (debug_cppint_max_iter == 0u || (iter + 1u) <= debug_cppint_max_iter)) {
+                debug_ref_state = mersenne_step_ref(debug_ref_state, p, mode);
+            }
+#endif
         }
+
+#if MERSENNE2_HAVE_BOOST_CPP_INT
+        if (debug_cppint_every != 0u && chunk_end != 0u &&
+            (debug_cppint_max_iter == 0u || chunk_end <= debug_cppint_max_iter) &&
+            ((chunk_end % std::max<uint32_t>(1u, debug_cppint_every)) == 0u || chunk_end == total_iters || chunk_end == debug_cppint_max_iter)) {
+            check(clFinish(Q), "clFinish debug_cppint");
+            std::vector<GF61_31> dbg_host_z(h);
+            if (use_small31_compact_cycle) {
+                std::vector<uint64_t> host_zc(2u * h);
+                check(clEnqueueReadBuffer(Q, Bzc, CL_TRUE, 0, sizeof(uint64_t) * host_zc.size(), host_zc.data(), 0, nullptr, nullptr), "read z_compact debug");
+                for (size_t i = 0; i < h; ++i) dbg_host_z[i] = GF61_31(host_zc[2u * i + 0u], host_zc[2u * i + 1u]);
+            } else {
+                check(clEnqueueReadBuffer(Q, Bz, CL_TRUE, 0, sizeof(GF61_31) * h, dbg_host_z.data(), 0, nullptr, nullptr), "read z debug");
+            }
+            const cpp_int gpu_state = mersenne_mod(reconstruct_value_from_digits(dbg_host_z, digit_width), p);
+            const cpp_int ref_state = mersenne_mod(debug_ref_state, p);
+            if (gpu_state != ref_state) {
+                std::cout << "DEBUG_MISMATCH iter=" << chunk_end
+                          << " gpu=0x" << cpp_int_hex_preview(gpu_state)
+                          << " ref=0x" << cpp_int_hex_preview(ref_state) << "\n";
+                std::cout << "DEBUG_HINT kernel-path=" << (can_use_chunk64_0() ? "chunk64-enabled" : "chunk64-disabled") << "\n";
+                return 2;
+            } else {
+                std::cout << "DEBUG_OK iter=" << chunk_end
+                          << " state=0x" << cpp_int_hex_preview(gpu_state) << "\n";
+            }
+        }
+#endif
+
         maybe_report(chunk_end, true);
     }
 
