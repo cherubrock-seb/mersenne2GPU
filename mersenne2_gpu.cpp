@@ -3463,16 +3463,33 @@ static AutoTuneChoice choose_auto_tune(uint32_t h_u32, size_t max_wg, cl_ulong l
     r.profile = "generic-auto";
 
     if (is_amd) {
-        r.profile = is_gfx9 ? "amd-wave64-smallblocks" : "amd-wave64-smallblocks";
-        // Large transforms benefit from finer carry block granularity: the direct block-carry path
-        // is already parallel across blocks, and smaller blocks reduce per-workitem serial digit_adc work.
-        // Keep the very small cases conservative to avoid unnecessary carry setup overhead.
-        if (h_u32 >= (1u << 20)) r.carry_pairs = 8u;
-        else if (h_u32 >= (1u << 18)) r.carry_pairs = 16u;
-        else if (h_u32 >= (1u << 16)) r.carry_pairs = 32u;
-        else if (h_u32 >= (1u << 14)) r.carry_pairs = 64u;
-        else if (h_u32 >= (1u << 12)) r.carry_pairs = 128u;
-        else r.carry_pairs = std::min<uint32_t>(256u, std::max<uint32_t>(1u, h_u32));
+        if (is_gfx9) {
+            r.profile = "amd-gfx9-wave32-wideblocks";
+            // Empirical default for gfx906 / Radeon VII class devices:
+            // wider carry blocks are much faster than the old tiny-block heuristic,
+            // and 32-thread work-groups outperform 64-thread groups on large transforms.
+            if (max_wg >= 32u) {
+                r.wg = 32u;
+                r.carry_wg = 32u;
+            } else {
+                r.wg = static_cast<uint32_t>(std::max<size_t>(1u, max_wg));
+                r.carry_wg = r.wg;
+            }
+            if (h_u32 >= (1u << 20)) r.carry_pairs = 1024u;
+            else if (h_u32 >= (1u << 19)) r.carry_pairs = 512u;
+            else if (h_u32 >= (1u << 18)) r.carry_pairs = 256u;
+            else if (h_u32 >= (1u << 16)) r.carry_pairs = 128u;
+            else if (h_u32 >= (1u << 14)) r.carry_pairs = 64u;
+            else r.carry_pairs = std::min<uint32_t>(256u, std::max<uint32_t>(1u, h_u32));
+        } else {
+            r.profile = "amd-wave64-smallblocks";
+            if (h_u32 >= (1u << 20)) r.carry_pairs = 128u;
+            else if (h_u32 >= (1u << 18)) r.carry_pairs = 64u;
+            else if (h_u32 >= (1u << 16)) r.carry_pairs = 32u;
+            else if (h_u32 >= (1u << 14)) r.carry_pairs = 64u;
+            else if (h_u32 >= (1u << 12)) r.carry_pairs = 128u;
+            else r.carry_pairs = std::min<uint32_t>(256u, std::max<uint32_t>(1u, h_u32));
+        }
     } else if (is_nvidia) {
         r.profile = "nvidia-warp32-splitwg";
         // Empirical default tuned from Tesla T4-style results:
