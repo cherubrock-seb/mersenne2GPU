@@ -3425,7 +3425,8 @@ static uint32_t clamp_carry_pairs(uint32_t x, uint32_t h_u32) {
 
 static uint32_t choose_wg_for_device(size_t max_wg, const std::string& dev_lower, const std::string& vendor_lower, cl_uint compute_units) {
     const bool is_amd = vendor_lower.find("amd") != std::string::npos || vendor_lower.find("advanced micro devices") != std::string::npos || dev_lower.find("gfx") != std::string::npos || dev_lower.find("radeon") != std::string::npos;
-    const bool is_nvidia = vendor_lower.find("nvidia") != std::string::npos || dev_lower.find("geforce") != std::string::npos || dev_lower.find("rtx") != std::string::npos || dev_lower.find("gtx") != std::string::npos;
+    const bool is_nvidia = vendor_lower.find("nvidia") != std::string::npos || dev_lower.find("tesla") != std::string::npos || dev_lower.find("geforce") != std::string::npos || dev_lower.find("rtx") != std::string::npos || dev_lower.find("gtx") != std::string::npos;
+    const bool is_nvidia_t4_like = is_nvidia && (dev_lower.find("tesla") != std::string::npos || dev_lower.find("t4") != std::string::npos || compute_units <= 48u);
     const bool is_apple = vendor_lower.find("apple") != std::string::npos || dev_lower.find("apple") != std::string::npos || dev_lower.find("m1") != std::string::npos || dev_lower.find("m2") != std::string::npos || dev_lower.find("m3") != std::string::npos;
     const bool is_intel = vendor_lower.find("intel") != std::string::npos || dev_lower.find("intel") != std::string::npos;
 
@@ -3433,6 +3434,8 @@ static uint32_t choose_wg_for_device(size_t max_wg, const std::string& dev_lower
     if (is_amd) {
         wg = 64u;
         if (compute_units >= 96u && max_wg >= 128u && dev_lower.find("cdna") != std::string::npos) wg = 128u;
+    } else if (is_nvidia_t4_like) {
+        wg = (max_wg >= 32u) ? 32u : std::max<size_t>(1u, max_wg);
     } else if (is_nvidia) {
         wg = (max_wg >= 128u) ? 128u : (max_wg >= 64u ? 64u : 32u);
     } else if (is_apple) {
@@ -3452,7 +3455,8 @@ static AutoTuneChoice choose_auto_tune(uint32_t h_u32, size_t max_wg, cl_ulong l
     const std::string dev_lower = lower_ascii(device_name);
     const std::string vendor_lower = lower_ascii(vendor_name);
     const bool is_amd = vendor_lower.find("amd") != std::string::npos || vendor_lower.find("advanced micro devices") != std::string::npos || dev_lower.find("gfx") != std::string::npos || dev_lower.find("radeon") != std::string::npos;
-    const bool is_nvidia = vendor_lower.find("nvidia") != std::string::npos || dev_lower.find("geforce") != std::string::npos || dev_lower.find("rtx") != std::string::npos || dev_lower.find("gtx") != std::string::npos;
+    const bool is_nvidia = vendor_lower.find("nvidia") != std::string::npos || dev_lower.find("tesla") != std::string::npos || dev_lower.find("geforce") != std::string::npos || dev_lower.find("rtx") != std::string::npos || dev_lower.find("gtx") != std::string::npos;
+    const bool is_nvidia_t4_like = is_nvidia && (dev_lower.find("tesla") != std::string::npos || dev_lower.find("t4") != std::string::npos || compute_units <= 48u);
     const bool is_apple = vendor_lower.find("apple") != std::string::npos || dev_lower.find("apple") != std::string::npos || dev_lower.find("m1") != std::string::npos || dev_lower.find("m2") != std::string::npos || dev_lower.find("m3") != std::string::npos;
     const bool is_gfx9 = (dev_lower.find("gfx9") != std::string::npos || dev_lower.find("gfx90") != std::string::npos || dev_lower.find("gfx906") != std::string::npos || dev_lower.find("vega") != std::string::npos || dev_lower.find("radeon vii") != std::string::npos);
 
@@ -3492,25 +3496,31 @@ static AutoTuneChoice choose_auto_tune(uint32_t h_u32, size_t max_wg, cl_ulong l
         }
     } else if (is_nvidia) {
         const bool nvidia_small_local = (local_mem_size <= 49152u);
-        const bool likely_turing_or_smaller = nvidia_small_local || compute_units <= 48u || dev_lower.find("tesla t4") != std::string::npos || dev_lower.find("t4") != std::string::npos;
-        r.profile = likely_turing_or_smaller ? "nvidia-warp32-wideblocks" : "nvidia-warp32-large";
+        const bool likely_turing_or_smaller = is_nvidia_t4_like || nvidia_small_local;
+        r.profile = likely_turing_or_smaller ? "nvidia-t4-warp32-wideblocks" : "nvidia-warp32-wideblocks";
 
-        // The old tiny-block heuristic (B=8) is catastrophically slow on large transforms
-        // because it explodes the number of carry blocks. Keep NVIDIA on warp-friendly groups,
-        // but use much wider carry blocks for h >= 2^18.
+        // This engine is not a pure FP32 workload: the post-transform carry and many field ops
+        // are sensitive to warp shape, local-memory behavior and integer throughput. On T4/Turing-like
+        // parts, the most reliable default is warp32 with wide carry blocks.
         if (likely_turing_or_smaller) {
+            if (max_wg >= 32u) {
+                r.wg = 32u;
+                r.carry_wg = 32u;
+            } else {
+                r.wg = static_cast<uint32_t>(std::max<size_t>(1u, max_wg));
+                r.carry_wg = r.wg;
+            }
+            if (h_u32 >= (1u << 20)) r.carry_pairs = 1024u;
+            else if (h_u32 >= (1u << 19)) r.carry_pairs = 1024u;
+            else if (h_u32 >= (1u << 18)) r.carry_pairs = 512u;
+            else if (h_u32 >= (1u << 16)) r.carry_pairs = 256u;
+            else if (h_u32 >= (1u << 14)) r.carry_pairs = 128u;
+            else r.carry_pairs = 64u;
+        } else {
             r.wg = (max_wg >= 64u) ? 64u : (max_wg >= 32u ? 32u : 16u);
-            r.carry_wg = r.wg;
+            r.carry_wg = (max_wg >= 32u) ? 32u : r.wg;
             if (h_u32 >= (1u << 20)) r.carry_pairs = 1024u;
             else if (h_u32 >= (1u << 19)) r.carry_pairs = 512u;
-            else if (h_u32 >= (1u << 18)) r.carry_pairs = 256u;
-            else if (h_u32 >= (1u << 16)) r.carry_pairs = 128u;
-            else if (h_u32 >= (1u << 14)) r.carry_pairs = 64u;
-            else r.carry_pairs = 32u;
-        } else {
-            r.wg = (max_wg >= 128u) ? 128u : (max_wg >= 64u ? 64u : 32u);
-            r.carry_wg = (max_wg >= 64u) ? 64u : (max_wg >= 32u ? 32u : 16u);
-            if (h_u32 >= (1u << 20)) r.carry_pairs = 512u;
             else if (h_u32 >= (1u << 18)) r.carry_pairs = 256u;
             else if (h_u32 >= (1u << 16)) r.carry_pairs = 128u;
             else if (h_u32 >= (1u << 14)) r.carry_pairs = 64u;
@@ -3687,7 +3697,7 @@ int main(int argc, char* argv[]) {
     const std::string dev_name_lower = lower_ascii(dev_name_str);
     const bool is_gfx9 = (dev_name_lower.find("gfx9") != std::string::npos || dev_name_lower.find("gfx90") != std::string::npos || dev_name_lower.find("gfx906") != std::string::npos || dev_name_lower.find("vega") != std::string::npos || dev_name_lower.find("radeon vii") != std::string::npos);
     const AutoTuneChoice auto_tune = choose_auto_tune(static_cast<uint32_t>(h), max_wg, local_mem_size, compute_units, dev_name_str, vendor_name_str);
-    const bool is_nvidia_dev = (lower_ascii(vendor_name_str).find("nvidia") != std::string::npos || dev_name_lower.find("tesla") != std::string::npos || dev_name_lower.find("rtx") != std::string::npos || dev_name_lower.find("gtx") != std::string::npos);
+    const bool is_nvidia_dev = (lower_ascii(vendor_name_str).find("nvidia") != std::string::npos || dev_name_lower.find("tesla") != std::string::npos || dev_name_lower.find("geforce") != std::string::npos || dev_name_lower.find("rtx") != std::string::npos || dev_name_lower.find("gtx") != std::string::npos);
     const bool is_amd_dev = (lower_ascii(vendor_name_str).find("amd") != std::string::npos || lower_ascii(vendor_name_str).find("advanced micro devices") != std::string::npos || dev_name_lower.find("gfx") != std::string::npos || dev_name_lower.find("radeon") != std::string::npos);
     if (!report_every_set) {
         if (is_nvidia_dev) {
