@@ -3987,11 +3987,9 @@ int main(int argc, char* argv[]) {
         }
     }
     // Safety-first: keep the generic scan/phase/drain carry path enabled for all sizes.
-    // The direct block-carry variants are still faster, but an injected block carry can
-    // survive past the end of a destination block without a guaranteed second-level
-    // propagation, which corrupts the final residue on some valid Mersenne exponents.
-    // Until that path gets its own correctness self-test or a proven repair, leave it off
-    // by default and recover performance only from the FFT-side kernels.
+    // The direct block-carry variants can leave an unpropagated carry when an injected
+    // block carry still spills past the end of the destination block, which corrupts
+    // the final residue on some valid Mersenne exponents.
     can_use_direct_block_carry = false;
     std::cout << "carry_blocks=" << nblocks_u32 << ", avg_pairs_per_block=" << std::fixed << std::setprecision(2) << (double(h_u32) / double(nblocks_u32)) << ", carry_target_pairs=" << target_pairs_per_block << ", tuned_wg=" << wg << ", carry_wg=" << carry_wg << ", local_stage_cap=" << ((local_stage_cap_override != 0u) ? std::min<size_t>(max_wg, static_cast<size_t>(local_stage_cap_override)) : std::min<size_t>(max_wg, (is_gfx9 || is_nvidia_dev) ? 256u : 128u)) << ", auto_profile=" << auto_tune.profile;
     if (wg_override != 0u || carry_pairs_override != 0u) std::cout << " (manual override)";
@@ -4093,10 +4091,22 @@ int main(int argc, char* argv[]) {
     };
 
     auto use_x4_path = [&](size_t active, size_t m_stage) -> bool {
+        if (is_nvidia_dev) {
+            const size_t min_active = 8u * wg;
+            // On NVIDIA/T4-like devices the generic x4 kernels are safe and can reduce
+            // launch overhead plus global traffic on the many large-m radix-4 stages.
+            // Keep only a simple minimum-activity guard and let the local specialized
+            // stages win first when they are available.
+            return (active >= min_active) && (m_stage >= 4);
+        }
         const size_t min_active = is_gfx9 ? (8u * wg) : (4u * wg);
         return (active >= min_active) && (m_stage >= 4) && (m_stage < 512);
     };
     auto use_x2_path = [&](size_t active, size_t m_stage) -> bool {
+        if (is_nvidia_dev) {
+            const size_t min_active = 4u * wg;
+            return (active >= min_active) && (m_stage >= 2);
+        }
         const size_t min_active = is_gfx9 ? (4u * wg) : (2u * wg);
         return (active >= min_active) && (m_stage >= 2) && (m_stage < 128);
     };
@@ -4366,7 +4376,7 @@ int main(int argc, char* argv[]) {
             const size_t active = s * size_t(m_i);
             if (current_m > 256 && can_use_forward_pair_large2(s, size_t(m_i)) && !stage_can_use_local256_fwd(size_t(m_i)) && !stage_can_use_local64_fwd(size_t(m_i))) {
                 const size_t active2 = s * size_t(m_i >> 2);
-                const bool use_w32_pair = (wg <= 32u) && (is_gfx9 || is_nvidia_dev);
+                const bool use_w32_pair = is_nvidia_t4_like_dev && wg <= 32u;
                 const size_t ls = use_w32_pair ? size_t(32) : size_t(64);
                 const size_t gs = round_up(active2, ls);
                 add_planned_kernel(iter_plan, use_w32_pair ? "forward_pair_large2_w32" : "forward_pair_large2", gs, ls, [&](cl_kernel k) {
@@ -4509,77 +4519,25 @@ int main(int argc, char* argv[]) {
             }
         }
 
-        const int n4_i = int(h / 2);
         if (current_m == 1) {
+            const int n4_i = int(h / 2);
             const size_t active = h / 2;
-            if (active >= 4u * wg) {
-                const size_t gs = round_up((active + 3u) / 4u, wg);
-                add_planned_kernel(iter_plan, "forward2_x4", gs, wg, [&](cl_kernel k) {
-                    check(clSetKernelArg(k, 0, sizeof(cl_mem), &Bz), "set arg plan forward2_x4 z");
-                    check(clSetKernelArg(k, 1, sizeof(cl_mem), &Bw), "set arg plan forward2_x4 w");
-                    check(clSetKernelArg(k, 2, sizeof(int), &n4_i), "set arg plan forward2_x4 n4");
-                }, "enqueue plan forward2_x4");
-                add_planned_kernel(iter_plan, "square_half_x4", gs, wg, [&](cl_kernel k) {
-                    check(clSetKernelArg(k, 0, sizeof(cl_mem), &Bz), "set arg plan square_half_x4 z");
-                    check(clSetKernelArg(k, 1, sizeof(cl_mem), &Bw), "set arg plan square_half_x4 w");
-                    check(clSetKernelArg(k, 2, sizeof(int), &n4_i), "set arg plan square_half_x4 n4");
-                }, "enqueue plan square_half_x4");
-                add_planned_kernel(iter_plan, "backward2_x4", gs, wg, [&](cl_kernel k) {
-                    check(clSetKernelArg(k, 0, sizeof(cl_mem), &Bz), "set arg plan backward2_x4 z");
-                    check(clSetKernelArg(k, 1, sizeof(cl_mem), &Bw), "set arg plan backward2_x4 w");
-                    check(clSetKernelArg(k, 2, sizeof(int), &n4_i), "set arg plan backward2_x4 n4");
-                }, "enqueue plan backward2_x4");
-            } else if (active >= 2u * wg) {
-                const size_t gs = round_up((active + 1u) / 2u, wg);
-                add_planned_kernel(iter_plan, "forward2_x2", gs, wg, [&](cl_kernel k) {
-                    check(clSetKernelArg(k, 0, sizeof(cl_mem), &Bz), "set arg plan forward2_x2 z");
-                    check(clSetKernelArg(k, 1, sizeof(cl_mem), &Bw), "set arg plan forward2_x2 w");
-                    check(clSetKernelArg(k, 2, sizeof(int), &n4_i), "set arg plan forward2_x2 n4");
-                }, "enqueue plan forward2_x2");
-                add_planned_kernel(iter_plan, "square_half_x2", gs, wg, [&](cl_kernel k) {
-                    check(clSetKernelArg(k, 0, sizeof(cl_mem), &Bz), "set arg plan square_half_x2 z");
-                    check(clSetKernelArg(k, 1, sizeof(cl_mem), &Bw), "set arg plan square_half_x2 w");
-                    check(clSetKernelArg(k, 2, sizeof(int), &n4_i), "set arg plan square_half_x2 n4");
-                }, "enqueue plan square_half_x2");
-                add_planned_kernel(iter_plan, "backward2_x2", gs, wg, [&](cl_kernel k) {
-                    check(clSetKernelArg(k, 0, sizeof(cl_mem), &Bz), "set arg plan backward2_x2 z");
-                    check(clSetKernelArg(k, 1, sizeof(cl_mem), &Bw), "set arg plan backward2_x2 w");
-                    check(clSetKernelArg(k, 2, sizeof(int), &n4_i), "set arg plan backward2_x2 n4");
-                }, "enqueue plan backward2_x2");
-            } else {
-                const size_t gs = round_up(active, wg);
-                add_planned_kernel(iter_plan, "forward2", gs, wg, [&](cl_kernel k) {
-                    check(clSetKernelArg(k, 0, sizeof(cl_mem), &Bz), "set arg plan forward2 z");
-                    check(clSetKernelArg(k, 1, sizeof(cl_mem), &Bw), "set arg plan forward2 w");
-                    check(clSetKernelArg(k, 2, sizeof(int), &n4_i), "set arg plan forward2 n4");
-                }, "enqueue plan forward2");
-                add_existing_step(iter_plan, Ksq, gs, wg, "enqueue plan square_half");
-                add_planned_kernel(iter_plan, "backward2", gs, wg, [&](cl_kernel k) {
-                    check(clSetKernelArg(k, 0, sizeof(cl_mem), &Bz), "set arg plan backward2 z");
-                    check(clSetKernelArg(k, 1, sizeof(cl_mem), &Bw), "set arg plan backward2 w");
-                    check(clSetKernelArg(k, 2, sizeof(int), &n4_i), "set arg plan backward2 n4");
-                }, "enqueue plan backward2");
-            }
+            const size_t gs = round_up(active, wg);
+            add_planned_kernel(iter_plan, "forward2", gs, wg, [&](cl_kernel k) {
+                check(clSetKernelArg(k, 0, sizeof(cl_mem), &Bz), "set arg plan forward2 z");
+                check(clSetKernelArg(k, 1, sizeof(cl_mem), &Bw), "set arg plan forward2 w");
+                check(clSetKernelArg(k, 2, sizeof(int), &n4_i), "set arg plan forward2 n4");
+            }, "enqueue plan forward2");
+            add_existing_step(iter_plan, Ksq, gs, wg, "enqueue plan square_half");
+            add_planned_kernel(iter_plan, "backward2", gs, wg, [&](cl_kernel k) {
+                check(clSetKernelArg(k, 0, sizeof(cl_mem), &Bz), "set arg plan backward2 z");
+                check(clSetKernelArg(k, 1, sizeof(cl_mem), &Bw), "set arg plan backward2 w");
+                check(clSetKernelArg(k, 2, sizeof(int), &n4_i), "set arg plan backward2 n4");
+            }, "enqueue plan backward2");
         } else {
             const size_t active = h / 2;
-            if (active >= 4u * wg) {
-                const size_t gs = round_up((active + 3u) / 4u, wg);
-                add_planned_kernel(iter_plan, "square_half_x4", gs, wg, [&](cl_kernel k) {
-                    check(clSetKernelArg(k, 0, sizeof(cl_mem), &Bz), "set arg plan square_half_x4 z");
-                    check(clSetKernelArg(k, 1, sizeof(cl_mem), &Bw), "set arg plan square_half_x4 w");
-                    check(clSetKernelArg(k, 2, sizeof(int), &n4_i), "set arg plan square_half_x4 n4");
-                }, "enqueue plan square_half_x4");
-            } else if (active >= 2u * wg) {
-                const size_t gs = round_up((active + 1u) / 2u, wg);
-                add_planned_kernel(iter_plan, "square_half_x2", gs, wg, [&](cl_kernel k) {
-                    check(clSetKernelArg(k, 0, sizeof(cl_mem), &Bz), "set arg plan square_half_x2 z");
-                    check(clSetKernelArg(k, 1, sizeof(cl_mem), &Bw), "set arg plan square_half_x2 w");
-                    check(clSetKernelArg(k, 2, sizeof(int), &n4_i), "set arg plan square_half_x2 n4");
-                }, "enqueue plan square_half_x2");
-            } else {
-                const size_t gs = round_up(active, wg);
-                add_existing_step(iter_plan, Ksq, gs, wg, "enqueue plan square_half");
-            }
+            const size_t gs = round_up(active, wg);
+            add_existing_step(iter_plan, Ksq, gs, wg, "enqueue plan square_half");
         }
 
         bool unweighted = false;
