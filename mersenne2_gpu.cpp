@@ -1438,6 +1438,69 @@ __kernel void forward_pair_large2(__global GF* restrict z, __global const ulong*
     }
 }
 
+__attribute__((reqd_work_group_size(32, 1, 1)))
+__kernel void forward_pair_large2_w32(__global GF* restrict z, __global const ulong* restrict w, int s, int m, int n) {
+    const int lid = (int)get_local_id(0);
+    const int gid = (int)get_global_id(0);
+    const int m2 = m >> 2;
+    const int total = s * m2;
+    if (m2 <= 0 || gid >= total) return;
+
+    const int j = gid / m2;
+    const int r = gid - j * m2;
+    const int base = j * (m << 2);
+    const int tw1 = s + j;
+
+    __local GF tw[15];
+    if (lid < 3) {
+        if (lid == 0) tw[0] = WGLOAD(2 * tw1);
+        else if (lid == 1) tw[1] = WGLOAD(tw1);
+        else tw[2] = WGLOAD((n >> 1) + tw1);
+    }
+    if (lid < 12) {
+        const int q = lid / 3;
+        const int which = lid - q * 3;
+        const int tw2 = (s << 2) + ((j << 2) + q);
+        if (which == 0) tw[3 + lid] = WGLOAD(2 * tw2);
+        else if (which == 1) tw[3 + lid] = WGLOAD(tw2);
+        else tw[3 + lid] = WGLOAD((n >> 1) + tw2);
+    }
+    barrier(CLK_LOCAL_MEM_FENCE);
+
+    const GF w1a = tw[0];
+    const GF w1b = tw[1];
+    const GF w1c = tw[2];
+
+    for (int q = 0; q < 4; ++q) {
+        const int off = base + q * m2 + r;
+
+        GF a0 = z[off];
+        GF a1 = gf_mul(z[off + m],     w1a);
+        GF a2 = gf_mul(z[off + 2 * m], w1b);
+        GF a3 = gf_mul(z[off + 3 * m], w1c);
+        GF b0 = gf_add(a0, a2), b1 = gf_add(a1, a3), b2 = gf_sub(a0, a2), b3 = gf_sub(a1, a3);
+        GF c0 = gf_add(b0, b1);
+        GF c1 = gf_sub(b0, b1);
+        GF c2 = gf_addi(b2, b3);
+        GF c3 = gf_subi(b2, b3);
+
+        const GF w2a = tw[3 + 3 * q + 0];
+        const GF w2b = tw[3 + 3 * q + 1];
+        const GF w2c = tw[3 + 3 * q + 2];
+        GF d0 = c0;
+        GF d1 = gf_mul(c1, w2a);
+        GF d2 = gf_mul(c2, w2b);
+        GF d3 = gf_mul(c3, w2c);
+        GF e0 = gf_add(d0, d2), e1 = gf_add(d1, d3), e2 = gf_sub(d0, d2), e3 = gf_sub(d1, d3);
+
+        const int out = base + q * m + r;
+        z[out]          = gf_add(e0, e1);
+        z[out + m2]     = gf_sub(e0, e1);
+        z[out + 2 * m2] = gf_addi(e2, e3);
+        z[out + 3 * m2] = gf_subi(e2, e3);
+    }
+}
+
 __attribute__((reqd_work_group_size(64, 1, 1)))
 __kernel void forward64_0(__global GF* restrict z, __global const ulong* restrict w, __global const IW* restrict iw, int n, __local GF* scratch) {
     int lid = (int)get_local_id(0);
@@ -3698,6 +3761,7 @@ int main(int argc, char* argv[]) {
     const bool is_gfx9 = (dev_name_lower.find("gfx9") != std::string::npos || dev_name_lower.find("gfx90") != std::string::npos || dev_name_lower.find("gfx906") != std::string::npos || dev_name_lower.find("vega") != std::string::npos || dev_name_lower.find("radeon vii") != std::string::npos);
     const AutoTuneChoice auto_tune = choose_auto_tune(static_cast<uint32_t>(h), max_wg, local_mem_size, compute_units, dev_name_str, vendor_name_str);
     const bool is_nvidia_dev = (lower_ascii(vendor_name_str).find("nvidia") != std::string::npos || dev_name_lower.find("tesla") != std::string::npos || dev_name_lower.find("geforce") != std::string::npos || dev_name_lower.find("rtx") != std::string::npos || dev_name_lower.find("gtx") != std::string::npos);
+    const bool is_nvidia_t4_like_dev = is_nvidia_dev && (dev_name_lower.find("tesla") != std::string::npos || dev_name_lower.find("t4") != std::string::npos || compute_units <= 48u);
     const bool is_amd_dev = (lower_ascii(vendor_name_str).find("amd") != std::string::npos || lower_ascii(vendor_name_str).find("advanced micro devices") != std::string::npos || dev_name_lower.find("gfx") != std::string::npos || dev_name_lower.find("radeon") != std::string::npos);
     if (!report_every_set) {
         if (is_nvidia_dev) {
@@ -3775,6 +3839,7 @@ int main(int argc, char* argv[]) {
     cl_kernel Kf4l2 = clCreateKernel(PR, "forward4_local2", &err); check(err, "kernel forward4_local2");
     cl_kernel Kf64 = clCreateKernel(PR, "forward64_stage", &err); check(err, "kernel forward64_stage");
     cl_kernel Kfp2 = clCreateKernel(PR, "forward_pair_large2", &err); check(err, "kernel forward_pair_large2");
+    cl_kernel Kfp2w32 = clCreateKernel(PR, "forward_pair_large2_w32", &err); check(err, "kernel forward_pair_large2_w32");
     cl_kernel Kf640 = clCreateKernel(PR, "forward64_0", &err); check(err, "kernel forward64_0");
     cl_kernel Kf640s31 = clCreateKernel(PR, "forward64_0_small31_refresh", &err); check(err, "kernel forward64_0_small31_refresh");
     cl_kernel Kf640s31c = clCreateKernel(PR, "forward64_0_small31_refresh_compact", &err); check(err, "kernel forward64_0_small31_refresh_compact");
@@ -4019,6 +4084,14 @@ int main(int argc, char* argv[]) {
     auto use_x2_path = [&](size_t active, size_t m_stage) -> bool {
         const size_t min_active = is_gfx9 ? (4u * wg) : (2u * wg);
         return (active >= min_active) && (m_stage >= 2) && (m_stage < 128);
+    };
+    auto use_center_x4_path = [&](size_t active) -> bool {
+        const size_t min_active = is_gfx9 ? (8u * wg) : (4u * wg);
+        return active >= min_active;
+    };
+    auto use_center_x2_path = [&](size_t active) -> bool {
+        const size_t min_active = is_gfx9 ? (4u * wg) : (2u * wg);
+        return active >= min_active;
     };
 
     bool chunk64_selftest_ok = false;
@@ -4278,15 +4351,16 @@ int main(int argc, char* argv[]) {
             const size_t active = s * size_t(m_i);
             if (current_m > 256 && can_use_forward_pair_large2(s, size_t(m_i)) && !stage_can_use_local256_fwd(size_t(m_i)) && !stage_can_use_local64_fwd(size_t(m_i))) {
                 const size_t active2 = s * size_t(m_i >> 2);
-                const size_t gs = round_up(active2, size_t(64));
-                const size_t ls = 64;
-                add_planned_kernel(iter_plan, "forward_pair_large2", gs, ls, [&](cl_kernel k) {
+                const bool use_w32_pair = is_nvidia_t4_like_dev && wg <= 32u;
+                const size_t ls = use_w32_pair ? size_t(32) : size_t(64);
+                const size_t gs = round_up(active2, ls);
+                add_planned_kernel(iter_plan, use_w32_pair ? "forward_pair_large2_w32" : "forward_pair_large2", gs, ls, [&](cl_kernel k) {
                     check(clSetKernelArg(k, 0, sizeof(cl_mem), &Bz), "set arg plan forward_pair_large2 z");
                     check(clSetKernelArg(k, 1, sizeof(cl_mem), &Bw), "set arg plan forward_pair_large2 w");
                     check(clSetKernelArg(k, 2, sizeof(int), &s_i), "set arg plan forward_pair_large2 s");
                     check(clSetKernelArg(k, 3, sizeof(int), &m_i), "set arg plan forward_pair_large2 m");
                     check(clSetKernelArg(k, 4, sizeof(int), &n_i), "set arg plan forward_pair_large2 n");
-                }, "enqueue plan forward_pair_large2");
+                }, use_w32_pair ? "enqueue plan forward_pair_large2_w32" : "enqueue plan forward_pair_large2");
                 current_m /= 16;
                 s *= 16;
                 continue;
@@ -4423,50 +4497,22 @@ int main(int argc, char* argv[]) {
         if (current_m == 1) {
             const int n4_i = int(h / 2);
             const size_t active = h / 2;
-            if (use_x4_path(active, active)) {
-                const size_t active4 = (active + 3) / 4;
-                const size_t gs = round_up(active4, wg);
-                add_planned_kernel(iter_plan, "fused_center2_x4", gs, wg, [&](cl_kernel k) {
-                    check(clSetKernelArg(k, 0, sizeof(cl_mem), &Bz), "set arg plan fused_center2_x4 z");
-                    check(clSetKernelArg(k, 1, sizeof(cl_mem), &Bw), "set arg plan fused_center2_x4 w");
-                    check(clSetKernelArg(k, 2, sizeof(int), &n4_i), "set arg plan fused_center2_x4 n4");
-                }, "enqueue plan fused_center2_x4");
-            } else if (use_x2_path(active, active)) {
-                const size_t active2 = (active + 1) / 2;
-                const size_t gs = round_up(active2, wg);
-                add_planned_kernel(iter_plan, "fused_center2_x2", gs, wg, [&](cl_kernel k) {
-                    check(clSetKernelArg(k, 0, sizeof(cl_mem), &Bz), "set arg plan fused_center2_x2 z");
-                    check(clSetKernelArg(k, 1, sizeof(cl_mem), &Bw), "set arg plan fused_center2_x2 w");
-                    check(clSetKernelArg(k, 2, sizeof(int), &n4_i), "set arg plan fused_center2_x2 n4");
-                }, "enqueue plan fused_center2_x2");
-            } else {
-                const size_t gs = round_up(active, wg);
-                add_planned_kernel(iter_plan, "forward2", gs, wg, [&](cl_kernel k) {
-                    check(clSetKernelArg(k, 0, sizeof(cl_mem), &Bz), "set arg plan forward2 z");
-                    check(clSetKernelArg(k, 1, sizeof(cl_mem), &Bw), "set arg plan forward2 w");
-                    check(clSetKernelArg(k, 2, sizeof(int), &n4_i), "set arg plan forward2 n4");
-                }, "enqueue plan forward2");
-                add_existing_step(iter_plan, Ksq, gs, wg, "enqueue plan square_half");
-                add_planned_kernel(iter_plan, "backward2", gs, wg, [&](cl_kernel k) {
-                    check(clSetKernelArg(k, 0, sizeof(cl_mem), &Bz), "set arg plan backward2 z");
-                    check(clSetKernelArg(k, 1, sizeof(cl_mem), &Bw), "set arg plan backward2 w");
-                    check(clSetKernelArg(k, 2, sizeof(int), &n4_i), "set arg plan backward2 n4");
-                }, "enqueue plan backward2");
-            }
+            const size_t gs = round_up(active, wg);
+            add_planned_kernel(iter_plan, "forward2", gs, wg, [&](cl_kernel k) {
+                check(clSetKernelArg(k, 0, sizeof(cl_mem), &Bz), "set arg plan forward2 z");
+                check(clSetKernelArg(k, 1, sizeof(cl_mem), &Bw), "set arg plan forward2 w");
+                check(clSetKernelArg(k, 2, sizeof(int), &n4_i), "set arg plan forward2 n4");
+            }, "enqueue plan forward2");
+            add_existing_step(iter_plan, Ksq, gs, wg, "enqueue plan square_half");
+            add_planned_kernel(iter_plan, "backward2", gs, wg, [&](cl_kernel k) {
+                check(clSetKernelArg(k, 0, sizeof(cl_mem), &Bz), "set arg plan backward2 z");
+                check(clSetKernelArg(k, 1, sizeof(cl_mem), &Bw), "set arg plan backward2 w");
+                check(clSetKernelArg(k, 2, sizeof(int), &n4_i), "set arg plan backward2 n4");
+            }, "enqueue plan backward2");
         } else {
             const size_t active = h / 2;
-            if (use_x4_path(active, active)) {
-                const size_t active4 = (active + 3) / 4;
-                const size_t gs = round_up(active4, wg);
-                add_existing_step(iter_plan, Ksqq, gs, wg, "enqueue plan square_half_x4");
-            } else if (use_x2_path(active, active)) {
-                const size_t active2 = (active + 1) / 2;
-                const size_t gs = round_up(active2, wg);
-                add_existing_step(iter_plan, Ksqx, gs, wg, "enqueue plan square_half_x2");
-            } else {
-                const size_t gs = round_up(active, wg);
-                add_existing_step(iter_plan, Ksq, gs, wg, "enqueue plan square_half");
-            }
+            const size_t gs = round_up(active, wg);
+            add_existing_step(iter_plan, Ksq, gs, wg, "enqueue plan square_half");
         }
 
         bool unweighted = false;
