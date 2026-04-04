@@ -4145,32 +4145,6 @@ int main(int argc, char* argv[]) {
     check(clSetKernelArg(Ksqq, 1, sizeof(cl_mem), &Bw), "set arg square_half_x4 w");
     check(clSetKernelArg(Ksqq, 2, sizeof(int), &n_i), "set arg square_half_x4 n");
 
-    const int n4_i = int(h / 2);
-    check(clSetKernelArg(Kf2, 0, sizeof(cl_mem), &Bz), "set arg forward2 z");
-    check(clSetKernelArg(Kf2, 1, sizeof(cl_mem), &Bw), "set arg forward2 w");
-    check(clSetKernelArg(Kf2, 2, sizeof(int), &n4_i), "set arg forward2 n4");
-    check(clSetKernelArg(Kf2x, 0, sizeof(cl_mem), &Bz), "set arg forward2_x2 z");
-    check(clSetKernelArg(Kf2x, 1, sizeof(cl_mem), &Bw), "set arg forward2_x2 w");
-    check(clSetKernelArg(Kf2x, 2, sizeof(int), &n4_i), "set arg forward2_x2 n4");
-    check(clSetKernelArg(Kf2q, 0, sizeof(cl_mem), &Bz), "set arg forward2_x4 z");
-    check(clSetKernelArg(Kf2q, 1, sizeof(cl_mem), &Bw), "set arg forward2_x4 w");
-    check(clSetKernelArg(Kf2q, 2, sizeof(int), &n4_i), "set arg forward2_x4 n4");
-    check(clSetKernelArg(Kb2, 0, sizeof(cl_mem), &Bz), "set arg backward2 z");
-    check(clSetKernelArg(Kb2, 1, sizeof(cl_mem), &Bw), "set arg backward2 w");
-    check(clSetKernelArg(Kb2, 2, sizeof(int), &n4_i), "set arg backward2 n4");
-    check(clSetKernelArg(Kb2x, 0, sizeof(cl_mem), &Bz), "set arg backward2_x2 z");
-    check(clSetKernelArg(Kb2x, 1, sizeof(cl_mem), &Bw), "set arg backward2_x2 w");
-    check(clSetKernelArg(Kb2x, 2, sizeof(int), &n4_i), "set arg backward2_x2 n4");
-    check(clSetKernelArg(Kb2q, 0, sizeof(cl_mem), &Bz), "set arg backward2_x4 z");
-    check(clSetKernelArg(Kb2q, 1, sizeof(cl_mem), &Bw), "set arg backward2_x4 w");
-    check(clSetKernelArg(Kb2q, 2, sizeof(int), &n4_i), "set arg backward2_x4 n4");
-    check(clSetKernelArg(Kfz2x, 0, sizeof(cl_mem), &Bz), "set arg fused_center2_x2 z");
-    check(clSetKernelArg(Kfz2x, 1, sizeof(cl_mem), &Bw), "set arg fused_center2_x2 w");
-    check(clSetKernelArg(Kfz2x, 2, sizeof(int), &n4_i), "set arg fused_center2_x2 n4");
-    check(clSetKernelArg(Kfz2q, 0, sizeof(cl_mem), &Bz), "set arg fused_center2_x4 z");
-    check(clSetKernelArg(Kfz2q, 1, sizeof(cl_mem), &Bw), "set arg fused_center2_x4 w");
-    check(clSetKernelArg(Kfz2q, 2, sizeof(int), &n4_i), "set arg fused_center2_x4 n4");
-
     check(clSetKernelArg(Ku, 0, sizeof(cl_mem), &Bz), "set arg unweight z");
     check(clSetKernelArg(Ku, 1, sizeof(cl_mem), &Bwi), "set arg unweight w");
     check(clSetKernelArg(Ku, 2, sizeof(int), &ln_i), "set arg unweight ln");
@@ -4536,43 +4510,24 @@ int main(int argc, char* argv[]) {
         }
 
         if (current_m == 1) {
+            const int n4_i = int(h / 2);
             const size_t active = h / 2;
-            // Do not use fused_center2_x2/x4 here: square_half couples j with a mirror
-            // partner that is generally outside the local x2/x4 pack, so a fully fused
-            // forward2+square_half+backward2 kernel is not globally safe without an
-            // inter-workgroup barrier or a different pairing schedule.
-            if (use_center_x4_path(active)) {
-                const size_t active4 = (active + 3u) / 4u;
-                const size_t gs = round_up(active4, wg);
-                add_existing_step(iter_plan, Kf2q, gs, wg, "enqueue plan forward2_x4");
-                add_existing_step(iter_plan, Ksqq, gs, wg, "enqueue plan square_half_x4");
-                add_existing_step(iter_plan, Kb2q, gs, wg, "enqueue plan backward2_x4");
-            } else if (use_center_x2_path(active)) {
-                const size_t active2 = (active + 1u) / 2u;
-                const size_t gs = round_up(active2, wg);
-                add_existing_step(iter_plan, Kf2x, gs, wg, "enqueue plan forward2_x2");
-                add_existing_step(iter_plan, Ksqx, gs, wg, "enqueue plan square_half_x2");
-                add_existing_step(iter_plan, Kb2x, gs, wg, "enqueue plan backward2_x2");
-            } else {
-                const size_t gs = round_up(active, wg);
-                add_existing_step(iter_plan, Kf2, gs, wg, "enqueue plan forward2");
-                add_existing_step(iter_plan, Ksq, gs, wg, "enqueue plan square_half");
-                add_existing_step(iter_plan, Kb2, gs, wg, "enqueue plan backward2");
-            }
+            const size_t gs = round_up(active, wg);
+            add_planned_kernel(iter_plan, "forward2", gs, wg, [&](cl_kernel k) {
+                check(clSetKernelArg(k, 0, sizeof(cl_mem), &Bz), "set arg plan forward2 z");
+                check(clSetKernelArg(k, 1, sizeof(cl_mem), &Bw), "set arg plan forward2 w");
+                check(clSetKernelArg(k, 2, sizeof(int), &n4_i), "set arg plan forward2 n4");
+            }, "enqueue plan forward2");
+            add_existing_step(iter_plan, Ksq, gs, wg, "enqueue plan square_half");
+            add_planned_kernel(iter_plan, "backward2", gs, wg, [&](cl_kernel k) {
+                check(clSetKernelArg(k, 0, sizeof(cl_mem), &Bz), "set arg plan backward2 z");
+                check(clSetKernelArg(k, 1, sizeof(cl_mem), &Bw), "set arg plan backward2 w");
+                check(clSetKernelArg(k, 2, sizeof(int), &n4_i), "set arg plan backward2 n4");
+            }, "enqueue plan backward2");
         } else {
             const size_t active = h / 2;
-            if (use_center_x4_path(active)) {
-                const size_t active4 = (active + 3u) / 4u;
-                const size_t gs = round_up(active4, wg);
-                add_existing_step(iter_plan, Ksqq, gs, wg, "enqueue plan square_half_x4");
-            } else if (use_center_x2_path(active)) {
-                const size_t active2 = (active + 1u) / 2u;
-                const size_t gs = round_up(active2, wg);
-                add_existing_step(iter_plan, Ksqx, gs, wg, "enqueue plan square_half_x2");
-            } else {
-                const size_t gs = round_up(active, wg);
-                add_existing_step(iter_plan, Ksq, gs, wg, "enqueue plan square_half");
-            }
+            const size_t gs = round_up(active, wg);
+            add_existing_step(iter_plan, Ksq, gs, wg, "enqueue plan square_half");
         }
 
         bool unweighted = false;
@@ -4949,8 +4904,6 @@ int main(int argc, char* argv[]) {
     clReleaseKernel(Kb2);
     clReleaseKernel(Kb2x);
     clReleaseKernel(Kb2q);
-    clReleaseKernel(Kfz2x);
-    clReleaseKernel(Kfz2q);
     clReleaseKernel(Kf4);
     clReleaseKernel(Kf4x);
     clReleaseKernel(Kf4q);
@@ -4958,7 +4911,6 @@ int main(int argc, char* argv[]) {
     clReleaseKernel(Kf4l2);
     clReleaseKernel(Kf64);
     clReleaseKernel(Kfp2);
-    clReleaseKernel(Kfp2w32);
     clReleaseKernel(Kf640);
     clReleaseKernel(Kf640s31);
     clReleaseKernel(Kf640s31c);
