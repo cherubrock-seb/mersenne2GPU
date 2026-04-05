@@ -873,16 +873,24 @@ __kernel void square_half(__global GF* restrict z, __global const ulong* restric
 __kernel void forward4_x2(__global GF* restrict z, __global const ulong* restrict w, int s, int m, int n) {
     int gid0 = (int)(get_global_id(0) * 2);
     int limit = s * m;
+    int cached_j = -1;
+    GF tw0, tw1, tw2;
     for (int t = 0; t < 2; ++t) {
         int gid = gid0 + t;
         if (gid >= limit) break;
         int j = gid / m;
         int i = gid - j * m;
+        if (j != cached_j) {
+            cached_j = j;
+            tw0 = WGLOAD(2 * (s + j));
+            tw1 = WGLOAD(s + j);
+            tw2 = WGLOAD((n >> 1) + s + j);
+        }
         int b = j * (m << 2);
         GF u0 = z[b + i];
-        GF u1 = gf_mul(z[b + m + i],     WGLOAD(2 * (s + j)));
-        GF u2 = gf_mul(z[b + 2*m + i],   WGLOAD(s + j));
-        GF u3 = gf_mul(z[b + 3*m + i],   WGLOAD((n >> 1) + s + j));
+        GF u1 = gf_mul(z[b + m + i],     tw0);
+        GF u2 = gf_mul(z[b + 2*m + i],   tw1);
+        GF u3 = gf_mul(z[b + 3*m + i],   tw2);
         GF v0 = gf_add(u0, u2), v1 = gf_add(u1, u3), v2 = gf_sub(u0, u2), v3 = gf_sub(u1, u3);
         z[b + i]       = gf_add(v0, v1);
         z[b + m + i]   = gf_sub(v0, v1);
@@ -894,16 +902,53 @@ __kernel void forward4_x2(__global GF* restrict z, __global const ulong* restric
 __kernel void forward4_x4(__global GF* restrict z, __global const ulong* restrict w, int s, int m, int n) {
     int gid0 = (int)(get_global_id(0) * 4);
     int limit = s * m;
+    int cached_j = -1;
+    GF tw0, tw1, tw2;
     for (int t = 0; t < 4; ++t) {
         int gid = gid0 + t;
         if (gid >= limit) break;
         int j = gid / m;
         int i = gid - j * m;
+        if (j != cached_j) {
+            cached_j = j;
+            tw0 = WGLOAD(2 * (s + j));
+            tw1 = WGLOAD(s + j);
+            tw2 = WGLOAD((n >> 1) + s + j);
+        }
         int b = j * (m << 2);
         GF u0 = z[b + i];
-        GF u1 = gf_mul(z[b + m + i],     WGLOAD(2 * (s + j)));
-        GF u2 = gf_mul(z[b + 2*m + i],   WGLOAD(s + j));
-        GF u3 = gf_mul(z[b + 3*m + i],   WGLOAD((n >> 1) + s + j));
+        GF u1 = gf_mul(z[b + m + i],     tw0);
+        GF u2 = gf_mul(z[b + 2*m + i],   tw1);
+        GF u3 = gf_mul(z[b + 3*m + i],   tw2);
+        GF v0 = gf_add(u0, u2), v1 = gf_add(u1, u3), v2 = gf_sub(u0, u2), v3 = gf_sub(u1, u3);
+        z[b + i]       = gf_add(v0, v1);
+        z[b + m + i]   = gf_sub(v0, v1);
+        z[b + 2*m + i] = gf_addi(v2, v3);
+        z[b + 3*m + i] = gf_subi(v2, v3);
+    }
+}
+
+__kernel void forward4_x8(__global GF* restrict z, __global const ulong* restrict w, int s, int m, int n) {
+    int gid0 = (int)(get_global_id(0) * 8);
+    int limit = s * m;
+    int cached_j = -1;
+    GF tw0, tw1, tw2;
+    for (int t = 0; t < 8; ++t) {
+        int gid = gid0 + t;
+        if (gid >= limit) break;
+        int j = gid / m;
+        int i = gid - j * m;
+        if (j != cached_j) {
+            cached_j = j;
+            tw0 = WGLOAD(2 * (s + j));
+            tw1 = WGLOAD(s + j);
+            tw2 = WGLOAD((n >> 1) + s + j);
+        }
+        int b = j * (m << 2);
+        GF u0 = z[b + i];
+        GF u1 = gf_mul(z[b + m + i],     tw0);
+        GF u2 = gf_mul(z[b + 2*m + i],   tw1);
+        GF u3 = gf_mul(z[b + 3*m + i],   tw2);
         GF v0 = gf_add(u0, u2), v1 = gf_add(u1, u3), v2 = gf_sub(u0, u2), v3 = gf_sub(u1, u3);
         z[b + i]       = gf_add(v0, v1);
         z[b + m + i]   = gf_sub(v0, v1);
@@ -915,36 +960,78 @@ __kernel void forward4_x4(__global GF* restrict z, __global const ulong* restric
 __kernel void backward4_x2(__global GF* restrict z, __global const ulong* restrict w, int s, int m, int n) {
     int gid0 = (int)(get_global_id(0) * 2);
     int limit = s * m;
+    int cached_j = -1;
+    GF tw0, tw1, tw2;
     for (int t = 0; t < 2; ++t) {
         int gid = gid0 + t;
         if (gid >= limit) break;
         int j = gid / m;
         int i = gid - j * m;
+        if (j != cached_j) {
+            cached_j = j;
+            tw0 = WGLOAD(s + j);
+            tw1 = WGLOAD(2 * (s + j));
+            tw2 = WGLOAD((n >> 1) + s + j);
+        }
         int b = j * (m << 2);
         GF u0 = z[b + i], u1 = z[b + m + i], u2 = z[b + 2*m + i], u3 = z[b + 3*m + i];
         GF v0 = gf_add(u0, u1), v1 = gf_sub(u0, u1), v2 = gf_add(u2, u3), v3 = gf_sub(u3, u2);
         z[b + i]       = gf_add(v0, v2);
-        z[b + 2*m + i] = gf_mulconj(gf_sub(v0, v2), WGLOAD(s + j));
-        z[b + m + i]   = gf_mulconj(gf_addi(v1, v3), WGLOAD(2*(s + j)));
-        z[b + 3*m + i] = gf_mulconj(gf_subi(v1, v3), WGLOAD((n >> 1) + s + j));
+        z[b + 2*m + i] = gf_mulconj(gf_sub(v0, v2), tw0);
+        z[b + m + i]   = gf_mulconj(gf_addi(v1, v3), tw1);
+        z[b + 3*m + i] = gf_mulconj(gf_subi(v1, v3), tw2);
     }
 }
 
 __kernel void backward4_x4(__global GF* restrict z, __global const ulong* restrict w, int s, int m, int n) {
     int gid0 = (int)(get_global_id(0) * 4);
     int limit = s * m;
+    int cached_j = -1;
+    GF tw0, tw1, tw2;
     for (int t = 0; t < 4; ++t) {
         int gid = gid0 + t;
         if (gid >= limit) break;
         int j = gid / m;
         int i = gid - j * m;
+        if (j != cached_j) {
+            cached_j = j;
+            tw0 = WGLOAD(s + j);
+            tw1 = WGLOAD(2 * (s + j));
+            tw2 = WGLOAD((n >> 1) + s + j);
+        }
         int b = j * (m << 2);
         GF u0 = z[b + i], u1 = z[b + m + i], u2 = z[b + 2*m + i], u3 = z[b + 3*m + i];
         GF v0 = gf_add(u0, u1), v1 = gf_sub(u0, u1), v2 = gf_add(u2, u3), v3 = gf_sub(u3, u2);
         z[b + i]       = gf_add(v0, v2);
-        z[b + 2*m + i] = gf_mulconj(gf_sub(v0, v2), WGLOAD(s + j));
-        z[b + m + i]   = gf_mulconj(gf_addi(v1, v3), WGLOAD(2*(s + j)));
-        z[b + 3*m + i] = gf_mulconj(gf_subi(v1, v3), WGLOAD((n >> 1) + s + j));
+        z[b + 2*m + i] = gf_mulconj(gf_sub(v0, v2), tw0);
+        z[b + m + i]   = gf_mulconj(gf_addi(v1, v3), tw1);
+        z[b + 3*m + i] = gf_mulconj(gf_subi(v1, v3), tw2);
+    }
+}
+
+__kernel void backward4_x8(__global GF* restrict z, __global const ulong* restrict w, int s, int m, int n) {
+    int gid0 = (int)(get_global_id(0) * 8);
+    int limit = s * m;
+    int cached_j = -1;
+    GF tw0, tw1, tw2;
+    for (int t = 0; t < 8; ++t) {
+        int gid = gid0 + t;
+        if (gid >= limit) break;
+        int j = gid / m;
+        int i = gid - j * m;
+        if (j != cached_j) {
+            cached_j = j;
+            tw0 = WGLOAD(s + j);
+            tw1 = WGLOAD(2 * (s + j));
+            tw2 = WGLOAD((n >> 1) + s + j);
+        }
+        int b = j * (m << 2);
+        GF u0 = z[b + i], u1 = z[b + m + i], u2 = z[b + 2*m + i], u3 = z[b + 3*m + i];
+        GF v0 = gf_add(u0, u1), v1 = gf_sub(u0, u1), v2 = gf_add(u2, u3), v3 = gf_sub(u3, u2);
+        z[b + i]       = gf_add(v0, v2);
+        z[b + 2*m + i] = gf_mulconj(gf_sub(v0, v2), tw0);
+        z[b + m + i]   = gf_mulconj(gf_addi(v1, v3), tw1);
+        z[b + 3*m + i] = gf_mulconj(gf_subi(v1, v3), tw2);
     }
 }
 
@@ -3848,6 +3935,7 @@ int main(int argc, char* argv[]) {
     cl_kernel Kf4  = clCreateKernel(PR, "forward4", &err); check(err, "kernel forward4");
     cl_kernel Kf4x = clCreateKernel(PR, "forward4_x2", &err); check(err, "kernel forward4_x2");
     cl_kernel Kf4q = clCreateKernel(PR, "forward4_x4", &err); check(err, "kernel forward4_x4");
+    cl_kernel Kf4o = clCreateKernel(PR, "forward4_x8", &err); check(err, "kernel forward4_x8");
     cl_kernel Kf4l = clCreateKernel(PR, "forward4_local", &err); check(err, "kernel forward4_local");
     cl_kernel Kf4l2 = clCreateKernel(PR, "forward4_local2", &err); check(err, "kernel forward4_local2");
     cl_kernel Kf64 = clCreateKernel(PR, "forward64_stage", &err); check(err, "kernel forward64_stage");
@@ -3865,6 +3953,7 @@ int main(int argc, char* argv[]) {
     cl_kernel Kb4  = clCreateKernel(PR, "backward4", &err); check(err, "kernel backward4");
     cl_kernel Kb4x = clCreateKernel(PR, "backward4_x2", &err); check(err, "kernel backward4_x2");
     cl_kernel Kb4q = clCreateKernel(PR, "backward4_x4", &err); check(err, "kernel backward4_x4");
+    cl_kernel Kb4o = clCreateKernel(PR, "backward4_x8", &err); check(err, "kernel backward4_x8");
     cl_kernel Kb4l = clCreateKernel(PR, "backward4_local", &err); check(err, "kernel backward4_local");
     cl_kernel Kb4l2 = clCreateKernel(PR, "backward4_local2", &err); check(err, "kernel backward4_local2");
     cl_kernel Kb64 = clCreateKernel(PR, "backward64_stage", &err); check(err, "kernel backward64_stage");
@@ -4092,6 +4181,10 @@ int main(int argc, char* argv[]) {
         return false;
     };
 
+    auto use_x8_path = [&](size_t active, size_t m_stage) -> bool {
+        const size_t min_active = is_gfx9 ? (16u * wg) : (8u * wg);
+        return (active >= min_active) && (m_stage >= 8) && (m_stage < 512);
+    };
     auto use_x4_path = [&](size_t active, size_t m_stage) -> bool {
         const size_t min_active = is_gfx9 ? (8u * wg) : (4u * wg);
         return (active >= min_active) && (m_stage >= 4) && (m_stage < 512);
@@ -4144,6 +4237,32 @@ int main(int argc, char* argv[]) {
     check(clSetKernelArg(Ksqq, 0, sizeof(cl_mem), &Bz), "set arg square_half_x4 z");
     check(clSetKernelArg(Ksqq, 1, sizeof(cl_mem), &Bw), "set arg square_half_x4 w");
     check(clSetKernelArg(Ksqq, 2, sizeof(int), &n_i), "set arg square_half_x4 n");
+
+    const int n4_i = int(h / 2);
+    check(clSetKernelArg(Kf2, 0, sizeof(cl_mem), &Bz), "set arg forward2 z");
+    check(clSetKernelArg(Kf2, 1, sizeof(cl_mem), &Bw), "set arg forward2 w");
+    check(clSetKernelArg(Kf2, 2, sizeof(int), &n4_i), "set arg forward2 n4");
+    check(clSetKernelArg(Kf2x, 0, sizeof(cl_mem), &Bz), "set arg forward2_x2 z");
+    check(clSetKernelArg(Kf2x, 1, sizeof(cl_mem), &Bw), "set arg forward2_x2 w");
+    check(clSetKernelArg(Kf2x, 2, sizeof(int), &n4_i), "set arg forward2_x2 n4");
+    check(clSetKernelArg(Kf2q, 0, sizeof(cl_mem), &Bz), "set arg forward2_x4 z");
+    check(clSetKernelArg(Kf2q, 1, sizeof(cl_mem), &Bw), "set arg forward2_x4 w");
+    check(clSetKernelArg(Kf2q, 2, sizeof(int), &n4_i), "set arg forward2_x4 n4");
+    check(clSetKernelArg(Kb2, 0, sizeof(cl_mem), &Bz), "set arg backward2 z");
+    check(clSetKernelArg(Kb2, 1, sizeof(cl_mem), &Bw), "set arg backward2 w");
+    check(clSetKernelArg(Kb2, 2, sizeof(int), &n4_i), "set arg backward2 n4");
+    check(clSetKernelArg(Kb2x, 0, sizeof(cl_mem), &Bz), "set arg backward2_x2 z");
+    check(clSetKernelArg(Kb2x, 1, sizeof(cl_mem), &Bw), "set arg backward2_x2 w");
+    check(clSetKernelArg(Kb2x, 2, sizeof(int), &n4_i), "set arg backward2_x2 n4");
+    check(clSetKernelArg(Kb2q, 0, sizeof(cl_mem), &Bz), "set arg backward2_x4 z");
+    check(clSetKernelArg(Kb2q, 1, sizeof(cl_mem), &Bw), "set arg backward2_x4 w");
+    check(clSetKernelArg(Kb2q, 2, sizeof(int), &n4_i), "set arg backward2_x4 n4");
+    check(clSetKernelArg(Kfz2x, 0, sizeof(cl_mem), &Bz), "set arg fused_center2_x2 z");
+    check(clSetKernelArg(Kfz2x, 1, sizeof(cl_mem), &Bw), "set arg fused_center2_x2 w");
+    check(clSetKernelArg(Kfz2x, 2, sizeof(int), &n4_i), "set arg fused_center2_x2 n4");
+    check(clSetKernelArg(Kfz2q, 0, sizeof(cl_mem), &Bz), "set arg fused_center2_x4 z");
+    check(clSetKernelArg(Kfz2q, 1, sizeof(cl_mem), &Bw), "set arg fused_center2_x4 w");
+    check(clSetKernelArg(Kfz2q, 2, sizeof(int), &n4_i), "set arg fused_center2_x4 n4");
 
     check(clSetKernelArg(Ku, 0, sizeof(cl_mem), &Bz), "set arg unweight z");
     check(clSetKernelArg(Ku, 1, sizeof(cl_mem), &Bwi), "set arg unweight w");
@@ -4476,7 +4595,17 @@ int main(int argc, char* argv[]) {
                     check(clSetKernelArg(k, 5, scratch, nullptr), "set arg plan forward4_local scratch");
                 }, "enqueue plan forward4_local");
             } else {
-                if (use_x4_path(active, size_t(m_i))) {
+                if (use_x8_path(active, size_t(m_i))) {
+                    const size_t active8 = (active + 7) / 8;
+                    const size_t gs = round_up(active8, wg);
+                    add_planned_kernel(iter_plan, "forward4_x8", gs, wg, [&](cl_kernel k) {
+                        check(clSetKernelArg(k, 0, sizeof(cl_mem), &Bz), "set arg plan forward4_x8 z");
+                        check(clSetKernelArg(k, 1, sizeof(cl_mem), &Bw), "set arg plan forward4_x8 w");
+                        check(clSetKernelArg(k, 2, sizeof(int), &s_i), "set arg plan forward4_x8 s");
+                        check(clSetKernelArg(k, 3, sizeof(int), &m_i), "set arg plan forward4_x8 m");
+                        check(clSetKernelArg(k, 4, sizeof(int), &n_i), "set arg plan forward4_x8 n");
+                    }, "enqueue plan forward4_x8");
+                } else if (use_x4_path(active, size_t(m_i))) {
                     const size_t active4 = (active + 3) / 4;
                     const size_t gs = round_up(active4, wg);
                     add_planned_kernel(iter_plan, "forward4_x4", gs, wg, [&](cl_kernel k) {
@@ -4510,24 +4639,43 @@ int main(int argc, char* argv[]) {
         }
 
         if (current_m == 1) {
-            const int n4_i = int(h / 2);
             const size_t active = h / 2;
-            const size_t gs = round_up(active, wg);
-            add_planned_kernel(iter_plan, "forward2", gs, wg, [&](cl_kernel k) {
-                check(clSetKernelArg(k, 0, sizeof(cl_mem), &Bz), "set arg plan forward2 z");
-                check(clSetKernelArg(k, 1, sizeof(cl_mem), &Bw), "set arg plan forward2 w");
-                check(clSetKernelArg(k, 2, sizeof(int), &n4_i), "set arg plan forward2 n4");
-            }, "enqueue plan forward2");
-            add_existing_step(iter_plan, Ksq, gs, wg, "enqueue plan square_half");
-            add_planned_kernel(iter_plan, "backward2", gs, wg, [&](cl_kernel k) {
-                check(clSetKernelArg(k, 0, sizeof(cl_mem), &Bz), "set arg plan backward2 z");
-                check(clSetKernelArg(k, 1, sizeof(cl_mem), &Bw), "set arg plan backward2 w");
-                check(clSetKernelArg(k, 2, sizeof(int), &n4_i), "set arg plan backward2 n4");
-            }, "enqueue plan backward2");
+            // Do not use fused_center2_x2/x4 here: square_half couples j with a mirror
+            // partner that is generally outside the local x2/x4 pack, so a fully fused
+            // forward2+square_half+backward2 kernel is not globally safe without an
+            // inter-workgroup barrier or a different pairing schedule.
+            if (use_center_x4_path(active)) {
+                const size_t active4 = (active + 3u) / 4u;
+                const size_t gs = round_up(active4, wg);
+                add_existing_step(iter_plan, Kf2q, gs, wg, "enqueue plan forward2_x4");
+                add_existing_step(iter_plan, Ksqq, gs, wg, "enqueue plan square_half_x4");
+                add_existing_step(iter_plan, Kb2q, gs, wg, "enqueue plan backward2_x4");
+            } else if (use_center_x2_path(active)) {
+                const size_t active2 = (active + 1u) / 2u;
+                const size_t gs = round_up(active2, wg);
+                add_existing_step(iter_plan, Kf2x, gs, wg, "enqueue plan forward2_x2");
+                add_existing_step(iter_plan, Ksqx, gs, wg, "enqueue plan square_half_x2");
+                add_existing_step(iter_plan, Kb2x, gs, wg, "enqueue plan backward2_x2");
+            } else {
+                const size_t gs = round_up(active, wg);
+                add_existing_step(iter_plan, Kf2, gs, wg, "enqueue plan forward2");
+                add_existing_step(iter_plan, Ksq, gs, wg, "enqueue plan square_half");
+                add_existing_step(iter_plan, Kb2, gs, wg, "enqueue plan backward2");
+            }
         } else {
             const size_t active = h / 2;
-            const size_t gs = round_up(active, wg);
-            add_existing_step(iter_plan, Ksq, gs, wg, "enqueue plan square_half");
+            if (use_center_x4_path(active)) {
+                const size_t active4 = (active + 3u) / 4u;
+                const size_t gs = round_up(active4, wg);
+                add_existing_step(iter_plan, Ksqq, gs, wg, "enqueue plan square_half_x4");
+            } else if (use_center_x2_path(active)) {
+                const size_t active2 = (active + 1u) / 2u;
+                const size_t gs = round_up(active2, wg);
+                add_existing_step(iter_plan, Ksqx, gs, wg, "enqueue plan square_half_x2");
+            } else {
+                const size_t gs = round_up(active, wg);
+                add_existing_step(iter_plan, Ksq, gs, wg, "enqueue plan square_half");
+            }
         }
 
         bool unweighted = false;
@@ -4695,7 +4843,17 @@ int main(int argc, char* argv[]) {
                     }, "enqueue plan backward4_local");
                 }
             } else {
-                if (use_x4_path(active, size_t(m_i))) {
+                if (use_x8_path(active, size_t(m_i))) {
+                    const size_t active8 = (active + 7) / 8;
+                    const size_t gs = round_up(active8, wg);
+                    add_planned_kernel(iter_plan, "backward4_x8", gs, wg, [&](cl_kernel k) {
+                        check(clSetKernelArg(k, 0, sizeof(cl_mem), &Bz), "set arg plan backward4_x8 z");
+                        check(clSetKernelArg(k, 1, sizeof(cl_mem), &Bw), "set arg plan backward4_x8 w");
+                        check(clSetKernelArg(k, 2, sizeof(int), &s_i), "set arg plan backward4_x8 s");
+                        check(clSetKernelArg(k, 3, sizeof(int), &m_i), "set arg plan backward4_x8 m");
+                        check(clSetKernelArg(k, 4, sizeof(int), &n_i), "set arg plan backward4_x8 n");
+                    }, "enqueue plan backward4_x8");
+                } else if (use_x4_path(active, size_t(m_i))) {
                     const size_t active4 = (active + 3) / 4;
                     const size_t gs = round_up(active4, wg);
                     add_planned_kernel(iter_plan, "backward4_x4", gs, wg, [&](cl_kernel k) {
@@ -4904,13 +5062,17 @@ int main(int argc, char* argv[]) {
     clReleaseKernel(Kb2);
     clReleaseKernel(Kb2x);
     clReleaseKernel(Kb2q);
+    clReleaseKernel(Kfz2x);
+    clReleaseKernel(Kfz2q);
     clReleaseKernel(Kf4);
     clReleaseKernel(Kf4x);
     clReleaseKernel(Kf4q);
+    clReleaseKernel(Kf4o);
     clReleaseKernel(Kf4l);
     clReleaseKernel(Kf4l2);
     clReleaseKernel(Kf64);
     clReleaseKernel(Kfp2);
+    clReleaseKernel(Kfp2w32);
     clReleaseKernel(Kf640);
     clReleaseKernel(Kf640s31);
     clReleaseKernel(Kf640s31c);
@@ -4922,6 +5084,7 @@ int main(int argc, char* argv[]) {
     clReleaseKernel(Kb4);
     clReleaseKernel(Kb4x);
     clReleaseKernel(Kb4q);
+    clReleaseKernel(Kb4o);
     clReleaseKernel(Kb4l);
     clReleaseKernel(Kb4l2);
     clReleaseKernel(Kb64);
