@@ -1,0 +1,2 @@
+Build:
+  g++ -O3 -std=c++20 -march=native gf61_ntt_prp_opencl_inplace_nobitrev_fused.cpp -o gf61_ntt_prp_opencl_inplace_nobitrev_fused $(pkg-config --cflags --libs OpenCL)
